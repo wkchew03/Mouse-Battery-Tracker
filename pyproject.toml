@@ -1,0 +1,13 @@
+[project]
+name = "mouse-battery-tracker"
+version = "0.1.0"
+description = "Lightweight Windows tray app for gaming mouse battery levels"
+requires-python = ">=3.10"
+dependencies = ["hidapi>=0.14", "pystray>=0.19.5", "Pillow>=10"]
+
+[project.scripts]
+mbt = "mbt.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

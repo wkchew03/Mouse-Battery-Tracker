@@ -1,0 +1,9 @@
+# HID transport. Already present on this machine (0.15.0).
+# Deliberately NOT pyusb: on Windows pyusb needs the HID driver replaced with
+# WinUSB via Zadig, which would stop the mouse working as a mouse. hidapi goes
+# through hid.dll with shared access and coexists with vendor software.
+hidapi>=0.14
+
+# Tray icon (pure Python) and icon rendering. Needed from Phase 1 onward.
+pystray>=0.19.5
+Pillow>=10

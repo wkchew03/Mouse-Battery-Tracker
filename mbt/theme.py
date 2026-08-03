@@ -22,6 +22,9 @@ HUD_CARD_DIM = "#24262c"
 HUD_TEXT = "#e8e9ed"
 HUD_MUTED = "#9a9ca6"
 HUD_TRACK = "#3a3d46"
+# Slightly lifted surface for the hero card, so the connected mouse reads as
+# the primary element without needing a different hue.
+HUD_HERO = "#31343d"
 
 THRESHOLD_HIGH = 50
 THRESHOLD_LOW = 20
@@ -38,6 +41,26 @@ def level_color(percent: int | None, charging: bool = False) -> RGBA:
     if percent >= THRESHOLD_LOW:
         return COLOR_MID
     return COLOR_LOW
+
+
+# How far to darken a colour for a reading that is no longer live. Chosen to
+# stay clearly readable against HUD_CARD while reading as obviously secondary
+# next to the connected mouse.
+DIM_FACTOR = 0.6
+
+
+def dim(color: RGBA, factor: float = DIM_FACTOR) -> RGBA:
+    """Darkened variant of a level colour, for disconnected mice.
+
+    Keeps the hue so the level still reads at a glance -- a stale 90% is still
+    green, just muted -- rather than flattening everything to grey.
+    """
+    return (
+        int(color[0] * factor),
+        int(color[1] * factor),
+        int(color[2] * factor),
+        color[3] if len(color) > 3 else 255,
+    )
 
 
 def to_hex(color: RGBA) -> str:

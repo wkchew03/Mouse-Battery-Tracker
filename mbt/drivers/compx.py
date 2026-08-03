@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import time
 
-from .. import hidio
+from .. import hidio, hidparse
 from .base import OFFLINE, DeviceInfo, Reading, matches, register
 
 VENDOR_ATTACK_SHARK = 0x373E
@@ -39,7 +39,37 @@ PIDS = {
     0x0047: "R5 Ultra (wireless)",
     0x0050: "M5 Ultra (wireless)",
     0x0051: "M5 Ultra (wired)",
+    0x006B: "CRDRAKO KO-ONE 8K receiver",
 }
+
+# Cache of "does this collection declare a feature report", keyed by HID path.
+# Answering it means opening the device to read its descriptor, and candidates()
+# runs on every poll.
+_feature_channel_cache: dict[bytes, bool] = {}
+
+
+def has_feature_channel(info: DeviceInfo) -> bool:
+    """True when this collection declares a feature report.
+
+    This is what actually distinguishes the command channel. The usage page
+    varies across the platform -- Attack Shark uses 0xff00, the CRDRAKO KO-ONE
+    uses 0xffff -- but only the command collection has feature reports; the
+    others carry input-only telemetry.
+    """
+    path = info.get("path")
+    if path is None:
+        return False
+    cached = _feature_channel_cache.get(path)
+    if cached is not None:
+        return cached
+
+    try:
+        descriptor = hidparse.parse(hidio.report_descriptor(path))
+        result = any(sizes.feature for sizes in descriptor.reports.values())
+    except Exception:
+        result = False
+    _feature_channel_cache[path] = result
+    return result
 
 
 def build_command(b2: int, b3: int, b4: int = 0, b5: int = 0) -> bytes:
@@ -90,22 +120,28 @@ class CompxDriver:
     vendor_ids = frozenset({VENDOR_ATTACK_SHARK})
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
-        """Score by usage page 0xFF00 (+100), usage 0x01 (+50), low interface."""
+        """Pick the collection that carries the command channel.
+
+        Selection is driven by the presence of a feature report rather than a
+        fixed usage page: the reference implementation scores 0xff00, but the
+        CRDRAKO KO-ONE puts the same protocol on 0xffff, and requiring 0xff00
+        silently skipped the device entirely.
+        """
         best: dict[tuple, tuple[int, DeviceInfo]] = {}
         for info in infos:
             if not matches(info, vendor_id=VENDOR_ATTACK_SHARK):
                 continue
             usage_page = info.get("usage_page") or 0
-            usage = info.get("usage") or 0
-            interface = info.get("interface_number")
-            interface = 99 if interface is None else interface
+            if not 0xFF00 <= usage_page <= 0xFFFF:
+                continue
 
             score = 0
-            if usage_page == 0xFF00:
+            if has_feature_channel(info):
                 score += 100
-            if usage == 0x01:
-                score += 50
-            score += max(0, 10 - min(interface, 10))
+            if usage_page == 0xFF00:
+                score += 20
+            if (info.get("usage") or 0) == 0x01:
+                score += 5
             if score < 100:
                 continue
 

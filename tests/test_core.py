@@ -11,6 +11,7 @@ import pytest
 from mbt.app import mock_provider
 from mbt.drivers.base import Reading, device_key, is_placeholder_serial
 from mbt.store import DeviceRecord, Store, format_age
+from mbt.theme import dim
 from mbt.tray import TrayApp, level_color, render_icon
 
 
@@ -128,6 +129,38 @@ def test_level_color_thresholds():
     assert level_color(None) == level_color(None)
     # Charging wins over level so a charging mouse never looks like a warning.
     assert level_color(5, charging=True) != level_color(5)
+
+
+def test_dim_darkens_every_channel():
+    """Disconnected mice were rendering in the same full-brightness colour as
+    the connected one, so the two were indistinguishable."""
+    bright = level_color(90)
+    dimmed = dim(bright)
+    assert dimmed != bright
+    for channel in range(3):
+        assert dimmed[channel] < bright[channel]
+
+
+def test_dim_preserves_hue_so_the_level_still_reads():
+    """A stale 45% should still look amber, not grey."""
+    amber = dim(level_color(45))
+    green = dim(level_color(90))
+    assert amber != green
+    # Amber stays red-dominant, green stays green-dominant.
+    assert amber[0] > amber[2]
+    assert green[1] > green[0]
+
+
+def test_dim_keeps_alpha():
+    assert dim(level_color(50))[3] == level_color(50)[3]
+
+
+def test_dim_stays_visible_against_the_card():
+    """Too dark and the bar disappears into the card background."""
+    card = (42, 44, 51)
+    for percent in (10, 50, 100):
+        dimmed = dim(level_color(percent))
+        assert sum(dimmed[:3]) > sum(card) + 30
 
 
 @pytest.mark.parametrize("percent", [None, 5, 68, 100])

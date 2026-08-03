@@ -111,13 +111,16 @@ def render_mouse(
     ImageDraw.Draw(mask).rounded_rectangle((x0, y0, x1, y1), radius=radius, fill=255)
 
     # 2. Fill layer: empty track, then the charged portion from the bottom up.
+    #
+    # A known level is drawn whether or not the mouse is currently reachable --
+    # an offline mouse still has a last-known charge, and blanking it made every
+    # disconnected mouse render as an identical empty shape. Offline levels use
+    # the muted colour so they read as stale rather than live.
     fill = Image.new("RGBA", (size, size), EMPTY)
-    if percent is not None and online:
-        level = level_color(percent, charging)
+    if percent is not None:
+        level = level_color(percent, charging) if online else COLOR_UNKNOWN
         top = y1 - (y1 - y0) * (max(0, min(100, percent)) / 100)
         ImageDraw.Draw(fill).rectangle((0, top, size, size), fill=level)
-    elif not online:
-        ImageDraw.Draw(fill).rectangle((0, 0, size, size), fill=EMPTY)
 
     fill.putalpha(mask)
     image.alpha_composite(fill)

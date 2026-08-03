@@ -1,0 +1,48 @@
+{
+  "Name": "Mouse Battery Tracker",
+  "Version": "1.0.0.0",
+  "Author": "Kai",
+  "Description": "Shows gaming mouse battery levels from Mouse Battery Tracker.",
+  "Category": "Mouse Battery",
+  "CategoryIcon": "imgs/plugin/category",
+  "Icon": "imgs/plugin/icon",
+  "SDKVersion": 3,
+  "CodePath": "bin/plugin.js",
+  "Nodejs": {
+    "Version": "24"
+  },
+  "Software": {
+    "MinimumVersion": "6.6"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Actions": [
+    {
+      "UUID": "com.kai.mousebattery.battery",
+      "Name": "Mouse Battery",
+      "Icon": "imgs/actions/battery/icon",
+      "Tooltip": "Battery level of a tracked mouse",
+      "Controllers": ["Keypad", "Encoder"],
+      "States": [
+        {
+          "Image": "imgs/actions/battery/key",
+          "TitleAlignment": "bottom"
+        }
+      ],
+      "Encoder": {
+        "Icon": "imgs/actions/battery/encoder",
+        "background": "imgs/actions/battery/background",
+        "layout": "$B1",
+        "TriggerDescription": {
+          "Rotate": "Cycle mice",
+          "Push": "Jump to connected mouse",
+          "Touch": "Jump to connected mouse"
+        }
+      }
+    }
+  ]
+}

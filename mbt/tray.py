@@ -13,7 +13,7 @@ from typing import Callable, Iterable
 import pystray
 from PIL import Image, ImageDraw, ImageFont  # noqa: F401  (Image used for LANCZOS)
 
-from . import autostart
+from . import autostart, feed
 from .drivers.base import Reading
 from .store import Store, format_age
 from .theme import (  # noqa: F401  (re-exported for callers and tests)
@@ -222,6 +222,13 @@ class TrayApp:
         try:
             self.store.save()
         except OSError:
+            pass
+
+        # Publish for external readers (the Stream Deck plugin). Best-effort:
+        # a feed problem must never stop the tray updating.
+        try:
+            feed.publish(self.store, {key for key, _, _ in online})
+        except Exception:
             pass
 
         self._check_low_battery(online)

@@ -30,6 +30,7 @@ from .theme import (
     HUD_HERO,
     HUD_MUTED,
     HUD_TEXT,
+    HUD_TEXT_DIM,
     HUD_TRACK,
     dim,
     level_color,
@@ -47,9 +48,18 @@ GRID_COLUMNS = 2
 class Hud:
     """Owns the Tk thread. Safe to call show()/update()/stop() from anywhere."""
 
-    def __init__(self, store: Store, images_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: Store,
+        images_dir: Path | None = None,
+        on_refresh=None,
+    ) -> None:
         self.store = store
         self.images_dir = images_dir or (store.directory / "images")
+        # Called when the window is opened, to ask for a fresh poll. Without it
+        # the HUD shows whatever the last scheduled poll found, which can be a
+        # full interval old -- so a mouse connected moments ago looks absent.
+        self.on_refresh = on_refresh
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
         self._root = None
@@ -308,6 +318,13 @@ class Hud:
         root = self._root
         if root is None:
             return
+        # Ask for a fresh reading as the window opens; the result arrives via
+        # update() a moment later and triggers another rebuild.
+        if self.on_refresh is not None:
+            try:
+                self.on_refresh()
+            except Exception:
+                pass
         self._rebuild()
         root.deiconify()
         root.lift()
@@ -602,7 +619,7 @@ class Hud:
             right,
             text=name,
             bg=HUD_CARD,
-            fg=HUD_TEXT,
+            fg=HUD_TEXT_DIM,
             font=("Segoe UI", 9, "bold"),
             anchor="w",
             justify="left",

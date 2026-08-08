@@ -60,10 +60,55 @@ def test_payload_length_and_offset():
 
 
 def test_parses_captured_response():
+    """4118 mV is above the vendor's top table entry (4110), so their software
+    shows 100% even though the mouse reports 95. We match the software."""
     reading = pulsar.parse_power(RESPONSE_AT_95)
     assert reading == Reading(
-        online=True, percent=95, charging=False, millivolts=4118
+        online=True, percent=100, charging=False, millivolts=4118
     )
+
+
+# --------------------------------------------------------------------------
+# Vendor voltage curve
+# --------------------------------------------------------------------------
+
+
+def test_above_the_table_is_full():
+    assert pulsar.percent_from_voltage(4122) == 100
+    assert pulsar.percent_from_voltage(4118) == 100
+
+
+def test_charging_caps_just_below_full():
+    """The vendor reports 99 while charging so it does not claim 'done' early."""
+    assert pulsar.percent_from_voltage(4122, charging=True) == 99
+
+
+def test_top_table_entry_is_not_reported_as_empty():
+    """The vendor's own function returns 0 at exactly the top entry, because the
+    lookup finds no bucket. Reproducing that would show a full cell as flat."""
+    assert pulsar.percent_from_voltage(4110) == 100
+
+
+def test_curve_is_monotonic():
+    previous = -1
+    for millivolts in range(3000, 4200, 10):
+        value = pulsar.percent_from_voltage(millivolts)
+        assert value >= previous
+        previous = value
+
+
+def test_curve_spans_the_full_range():
+    assert pulsar.percent_from_voltage(3000) == 0
+    assert pulsar.percent_from_voltage(4200) == 100
+    midpoint = pulsar.percent_from_voltage(3880)
+    assert 40 <= midpoint <= 60
+
+
+def test_level_is_used_when_no_voltage_is_reported():
+    """Some replies carry no voltage; the device's own level is the fallback."""
+    response = bytearray(RESPONSE_AT_95)
+    response[8:10] = b"\x00\x00"
+    assert pulsar.parse_power(bytes(response)).percent == 95
 
 
 def test_voltage_is_big_endian():

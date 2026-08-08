@@ -10,8 +10,11 @@ Note this does NOT cover the IPI Float 88 (`372e:1014`), which is a different
 platform entirely -- it uses report ID 0x03 with a checksummed `0x50` frame and
 never answers this command. That one is implemented in `ipi.py`.
 
-STATUS: unit-tested against the documented layout; no CompX gen-2 hardware was
-available to confirm it.
+STATUS: verified on a CRDRAKO KO-ONE 8K receiver (373e:006b), cross-checked
+against the vendor's panel at 100%.
+
+Note the command channel is not always on usage page 0xff00 -- the KO-ONE uses
+0xffff -- so the collection is chosen by which one declares a feature report.
 """
 
 from __future__ import annotations

@@ -20,6 +20,9 @@ HUD_BG = "#1e1f24"
 HUD_CARD = "#2a2c33"
 HUD_CARD_DIM = "#24262c"
 HUD_TEXT = "#e8e9ed"
+# Names of disconnected mice: clearly dimmer than a live name, but still
+# brighter than HUD_MUTED so the name/timestamp hierarchy survives.
+HUD_TEXT_DIM = "#b0b2bc"
 HUD_MUTED = "#9a9ca6"
 HUD_TRACK = "#3a3d46"
 # Slightly lifted surface for the hero card, so the connected mouse reads as

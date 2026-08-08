@@ -52,6 +52,18 @@ class Poller:
         extra = failures - self.failure_threshold + 1
         return min(self.base_interval * (2**extra), self.max_interval)
 
+    def reset_backoff(self) -> None:
+        """Make every device due immediately.
+
+        A manual refresh has to clear backoff, not just wake the loop: a mouse
+        that was asleep may be several failures deep and not due for minutes,
+        so without this "refresh" would return the same cached "off" and the
+        mouse would stay invisible despite being switched on.
+        """
+        for state in self._state.values():
+            state.failures = 0
+            state.next_due = 0.0
+
     def poll(self, now: float | None = None) -> list[tuple[str, str, Reading]]:
         """Read every due device; reuse the cached reading for the rest."""
         now = time.time() if now is None else now

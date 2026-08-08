@@ -72,6 +72,52 @@ READ_TIMEOUT_MS = 250
 KNOWN_PIDS = (0xF507, 0xF508)
 
 
+# Pulsar's configurator does not display the level the mouse reports. It derives
+# a percentage from the cell voltage using this table (millivolts), taken from
+# the bundle's `w` array, and treats anything above the top entry as full.
+#
+# The two disagree in normal use: at 4122 mV the mouse says 95% while the table
+# says 100%. Matching the vendor keeps this app consistent with the software the
+# user compares it against. The raw figures are both preserved on the Reading --
+# `millivolts` is the measurement, and the device's own level is what the driver
+# falls back to when no voltage is reported.
+VOLTAGE_TABLE = (
+    3050, 3420, 3480, 3540, 3600, 3660, 3720, 3760, 3800, 3840,
+    3880, 3920, 3940, 3960, 3980, 4000, 4020, 4040, 4060, 4080, 4110,
+)
+
+
+def percent_from_voltage(millivolts: int, charging: bool = False) -> int:
+    """Vendor's voltage -> percent curve.
+
+    Mirrors their `T(voltage, charging)`, with one deliberate difference: their
+    version returns 0 when the voltage exactly equals the top table entry,
+    because the lookup finds no bucket and falls through with s = 0. That is a
+    bug, and reproducing it would report a full battery as empty.
+    """
+    if millivolts >= VOLTAGE_TABLE[-1]:
+        return 99 if charging else 100
+
+    bucket = None
+    for index, threshold in enumerate(VOLTAGE_TABLE):
+        if millivolts < threshold:
+            bucket = index
+            break
+    if bucket is None:
+        return 100
+    if bucket == 0:
+        return 0
+
+    step = (VOLTAGE_TABLE[bucket] - VOLTAGE_TABLE[bucket - 1]) / 5
+    value = (millivolts - VOLTAGE_TABLE[bucket - 1]) / step + 5 * (bucket - 1)
+
+    # The vendor bumps the result by one when it lands exactly on 0 or 15. That
+    # makes their curve non-monotonic -- 3050 mV reports 1% while 3060 mV
+    # reports 0% -- so it is left out. The difference is a single point at two
+    # exact table boundaries.
+    return max(0, min(100, round(value)))
+
+
 def checksum(body: bytes, base: int = CHECKSUM_PULSAR) -> int:
     """Trailing checksum byte: (base - sum(body)) & 0xff."""
     return (base - sum(body)) & 0xFF
@@ -132,6 +178,11 @@ def parse_power(response: bytes) -> Reading:
         return OFFLINE
     if not 0 <= percent <= 100:
         return OFFLINE
+
+    # Prefer the vendor's voltage curve so the number matches their software;
+    # fall back to the level the mouse reports if no voltage came back.
+    if millivolts:
+        percent = percent_from_voltage(millivolts, charging)
 
     return Reading(
         online=True,

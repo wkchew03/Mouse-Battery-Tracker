@@ -4,17 +4,15 @@ A lightweight Windows tray app that reads gaming mouse battery levels directly
 over USB HID, so you don't have to open Razer Synapse / G HUB / a vendor web
 configurator just to check a percentage.
 
-Shows the currently connected mouse and recently used mice, with the last known
-level and how long ago each was seen.
-
-- **Read-only.** It never writes settings, and it opens/closes the device around
-  each read, so it coexists with vendor software rather than fighting it.
-- **Light.** ~33 MB RAM and effectively 0% CPU between polls (default: 60s).
+- **Read-only.** It never writes settings, and it opens and closes the device
+  around each read, so it coexists with vendor software rather than fighting it.
+- **Light.** ~45 MB RAM and effectively 0% CPU between polls (default: 60 s).
+  No GPU context, no web view, no bundled browser.
+- **Six brands verified against their own vendor software.**
 
 ## Install
 
-Requires Python 3.10+. On the development machine `hidapi` was already present;
-otherwise:
+Requires Python 3.10+.
 
 ```bash
 python -m pip install -r requirements.txt
@@ -22,26 +20,59 @@ python -m pip install -r requirements.txt
 
 ## Use
 
-Run the tray app:
+Double-click **`Mouse Battery Tracker.bat`**, or:
 
 ```bash
-python -m mbt tray
+pythonw -m mbt tray
 ```
 
-Preview the UI without any hardware:
+`pythonw` rather than `python` keeps a console window from appearing. Running it
+twice is harmless — the second copy detects the first and exits.
 
-```bash
-python -m mbt tray --mock --interval 5
-```
+Tick **Start with Windows** in the tray menu to launch it at login.
 
-Print battery for every detected mouse and exit:
+### What you get
+
+- **Tray icon** showing the connected mouse's percentage, with a tooltip listing
+  every mouse.
+- **Detail window** (left-click the icon): a hero card for the connected mouse
+  with a ring gauge, plus a history grid of previously seen mice with their last
+  known level and when they were last seen. Scrolls; rename a mouse or set a
+  custom picture by clicking its name or image.
+- **Low-battery alert** at 15%, once per discharge cycle rather than every poll.
+- **Stream Deck plugin** (optional) — see `streamdeck/`.
+
+### Other commands
 
 ```bash
 python -m mbt read
 ```
 
-To run it without a console window, launch it with `pythonw.exe` instead of
-`python.exe`.
+Print battery for every detected mouse and exit. This is the quickest way to
+check whether a driver works.
+
+```bash
+python -m mbt tray --mock --interval 5
+```
+
+Preview the UI with fake devices. Note this writes the fake mice into your saved
+state.
+
+## Stream Deck
+
+```bash
+python streamdeck/build_assets.py
+powershell -ExecutionPolicy Bypass -File streamdeck/install.ps1 -Restart
+```
+
+Then add the **Mouse Battery** action to a key or dial. Keys show the gauge and
+percentage; the Plus dial cycles mice on its LCD strip.
+
+The plugin is dependency-free — Stream Deck ships its own Node runtime, and it
+only ever reads the feed the tray app publishes to
+`%APPDATA%/MouseBatteryTracker/streamdeck/`. All device access stays in the
+Python app, because two processes polling the same mice would contend for the
+HID handles.
 
 ## Adding support for a mouse
 
@@ -49,47 +80,69 @@ Discovery first — this prints every HID collection, highlighting the
 vendor-defined ones where battery protocols live:
 
 ```bash
-python -m mbt probe --only-known --descriptors
+python -m mbt probe --descriptors --read-features
 ```
 
 `--descriptors` reads each vendor collection's HID report descriptor, which
 tells you exactly which report IDs the device supports and their payload sizes.
-That is usually enough to avoid guessing at an undocumented protocol.
-
-To read (never write) the declared feature reports and hexdump them:
-
-```bash
-python -m mbt probe --only-known --read-features
-```
+`--read-features` reads (never writes) the declared feature reports. On some
+devices that alone returns the battery.
 
 Then add a driver under `mbt/drivers/` implementing `candidates()` and `read()`
-— see `mbt/drivers/base.py` for the protocol, and `docs/protocols.md` for the
-per-vendor byte layouts and what has actually been verified on hardware.
+— see `mbt/drivers/base.py` for the protocol and `docs/protocols.md` for the
+per-vendor byte layouts.
 
-**Match the full `(vendor_id, product_id, interface_number, usage_page, usage)`
-tuple.** Every one of these mice exposes 3-6 collections and only the
-vendor-defined one answers commands; matching on vid/pid alone opens the wrong
-collection and times out.
+Three things that cost real time on this project:
+
+- **Match more than vid/pid.** Every one of these mice exposes 3–6 collections
+  and only one answers. The distinguishing signal varies: usually a
+  vendor-defined usage page, but on the CRDRAKO it is *which collection declares
+  a feature report*.
+- **Listen for minutes, not seconds.** A device that seems silent may be on a
+  30-second heartbeat. A 12-second listen produced a false negative that sent
+  the IPI investigation down a dead end for ~25 speculative writes.
+- **If the vendor software is web-based, read its JavaScript.** Four of the six
+  protocols came straight out of a WebHID bundle. That is far faster and safer
+  than guessing at command bytes.
 
 ## Status
 
-| Driver | Protocol source | Verified on hardware |
+| Driver | Protocol | Verified against |
 |---|---|---|
-| Logitech (`046d`) | HID++ 2.0, features `0x1004` / `0x1000` | not yet |
-| Razer (`1532`) | 90-byte report, class `0x07` id `0x80` | not yet |
-| Pulsar (`3554`) | 17-byte frames, report ID 8, cmd `0x04` | not yet |
-| CompX gen 2 (`373e`) | 64-byte feature reports, opcode `0x83` | not yet |
-| IPI Float 88 (`372e:1014`) | unresolved | n/a |
+| Logitech (`046d`) | HID++ 2.0, feature `0x1004` | G Pro X Superlight 2 — Onboard Memory Manager |
+| Razer (`1532`) | 90-byte report, class `0x07`/`0x80` | Viper V3 Pro — Synapse |
+| Pulsar (`3710`, `3554`) | 17-byte frames, report 8, cmd `0x04` | X2N + TenZ — bbb.pulsar.gg |
+| IPI (`372e`) | `get_basic_info`, report `0x03` | Float 88 — shan.ipigame.cn |
+| Orbitalworks (`1915`) | 64-byte reports, cmd `0x81` | Pathfinder V1 — orbital-web-ctrl |
+| CompX gen 2 (`373e`) | 64-byte feature reports, opcode `0x83` | CRDRAKO KO-ONE — panel.crdrako.com |
 
-Frame construction and response parsing are unit-tested against the documented
-layouts (`python -m pytest`), but each driver still needs checking against a
-real mouse — compare `python -m mbt read` with what the vendor software reports.
+Every percentage above was cross-checked against the vendor's own software, not
+just "the driver returned a number". That distinction caught two bugs that a
+plausible-looking reading would have hidden.
 
-The IPI Float 88 accepts writes but never answers on either vendor collection;
-see `docs/protocols.md` for everything that was tried and the remaining leads.
+### Not supported
+
+- **Zowie U2-DW** (`04a5:800a`) — has a vendor channel (`0xff03` out / `0xff04`
+  in) but never answers and never volunteers anything, across ~5 minutes of
+  passive capture. No vendor software and no public protocol to copy from.
+  Remaining lead: capture its firmware update tool.
+- **Finalmouse Starlight-12** (`1915:f6b0`) — not possible. Its receiver's
+  entire report descriptor is 64 bytes of plain mouse: no vendor collection, no
+  feature or output reports, nowhere to send a query.
+
+### A note on Pulsar percentages
+
+Pulsar's configurator does not display the level the mouse reports. It derives
+one from cell voltage via a lookup table and treats anything above 4110 mV as
+100%. This app follows their curve so the numbers agree with their software; the
+mouse's own figure reads ~5 points lower near full charge. Raw millivolts are
+kept on the reading either way.
 
 ## Tests
 
 ```bash
 python -m pytest
 ```
+
+Frame construction and response parsing are unit-tested against **captured
+bytes from real hardware**, so a refactor that shifts an offset fails loudly.

@@ -86,6 +86,9 @@ class TrayApp:
         self.provider = provider
         self.poll_interval = poll_interval
         self.hud = hud
+        # Set by run_tray when a real Poller is in use, so a manual refresh can
+        # clear its backoff. None under mock providers.
+        self.poller = None
 
         self._stop = threading.Event()
         self._wake = threading.Event()
@@ -243,8 +246,18 @@ class TrayApp:
 
     # ---- actions --------------------------------------------------------
 
-    def _on_refresh(self, icon=None, item=None) -> None:
+    def request_refresh(self) -> None:
+        """Poll now, ignoring backoff. Safe to call from any thread."""
+        poller = getattr(self, "poller", None)
+        if poller is not None:
+            try:
+                poller.reset_backoff()
+            except Exception:
+                pass
         self._wake.set()
+
+    def _on_refresh(self, icon=None, item=None) -> None:
+        self.request_refresh()
 
     def _on_show_hud(self, icon=None, item=None) -> None:
         if self.hud is not None:

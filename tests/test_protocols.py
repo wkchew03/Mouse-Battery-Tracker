@@ -38,12 +38,21 @@ def test_pulsar_frame_rejects_oversized_args():
 
 
 def test_pulsar_parse_power():
+    """The percentage comes from the vendor's voltage curve, not the level byte.
+
+    Their configurator derives the displayed figure from voltage and ignores the
+    reported level, and the two disagree in normal use -- so 72 in the level
+    field is superseded by the 4020 mV reading.
+    """
     response = bytearray(17)
-    response[6] = 72          # percent
+    response[6] = 72          # reported level, superseded by the voltage curve
     response[7] = 1           # external power connected
     response[8:10] = (4020).to_bytes(2, "big")
     reading = pulsar.parse_power(bytes(response))
-    assert reading == Reading(online=True, percent=72, charging=True, millivolts=4020)
+    assert reading.online is True
+    assert reading.charging is True
+    assert reading.millivolts == 4020
+    assert reading.percent == pulsar.percent_from_voltage(4020, charging=True)
 
 
 def test_pulsar_zeroed_response_means_offline():

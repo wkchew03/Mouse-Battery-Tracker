@@ -14,8 +14,13 @@ Devices also emit unsolicited notifications on the same channel, so replies are
 matched on (device index, feature index, function|software id) rather than just
 taking the next report that arrives.
 
-STATUS: unit-tested against the documented frame layout; not yet confirmed
-against physical Logitech hardware.
+STATUS: verified on a G Pro X Superlight 2 via a Lightspeed receiver
+(046d:c54d), cross-checked against Logitech Onboard Memory Manager.
+
+Observed on that device: it answers on receiver slot 0x01, not the
+direct-connect index 0xFF, and resolves feature 0x1004 to index 6 -- so it
+reports a true state of charge rather than a bucket. Sweeping the device
+indices matters: querying only 0xFF returns nothing at all.
 """
 
 from __future__ import annotations

@@ -135,15 +135,21 @@ def run_tray(mock: bool = False, interval: float = 60.0) -> int:
     # renders at 96 DPI and upscales the result.
     dpi.enable()
 
+    poller = None
     if mock:
         provider = mock_provider
     else:
         # Backoff lives in the poller, not the tray loop, so a sleeping mouse
         # gets retried less often while a live one still updates every cycle.
-        provider = Poller(base_interval=interval).poll
+        poller = Poller(base_interval=interval)
+        provider = poller.poll
     store = Store()
     hud = Hud(store)
     app = TrayApp(store, provider, poll_interval=interval, hud=hud)
+    app.poller = poller
+    # Opening the HUD wakes the poll loop, so the window shows a reading taken
+    # just now rather than up to `interval` seconds ago.
+    hud.on_refresh = app.request_refresh
     if mock:
         print("Running tray with mock data. Right-click the tray icon.")
     app.run()

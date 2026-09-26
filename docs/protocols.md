@@ -350,6 +350,115 @@ Also untested and cheap: connect the Float 88 **by USB cable**. Wired mode often
 enumerates under a different VID/PID (possibly `3554:…`) and may expose the
 generation-1 protocol, which is already implemented in `drivers/pulsar.py`.
 
+## Finalmouse — VID `0x361D`
+
+Not to be confused with the Starlight-12 (`1915:f6b0`, Nordic's vid), which is
+genuinely unreadable. The UltralightX is a different device on Finalmouse's own
+vid and it has a proper vendor collection.
+
+Product ids come from Finalmouse's published udev rules
+(`github.com/teamfinalmouse/xpanel-linux-permissions`): `0100 0101 0102 0103
+0104 0111 0200 0201 0202 0203`, plus `1fc9:0021` (NXP) for the bootloader.
+
+### Wire format
+
+Vendor collection is usage page `0xff00`. The report descriptor declares four
+reports and **no feature reports**:
+
+```
+report id 0x02  output=63B     report id 0x03  input=63B
+report id 0x04  output=63B     report id 0x05  input=63B
+```
+
+The ULX uses `0x04` out / `0x05` in; the SLX uses `0x01` out. Requests:
+
+```
+[0]   report id (0x04)
+[1]   2 + len(args)
+[2]   0x80 | command      <- the high bit marks a request
+[3]   len(args)
+[4:]  args, zero padded to 63 bytes
+```
+
+Replies echo the command with the high bit clear, at `[2]`, with `[3]` the
+argument count. **Match on the echoed command.** The dongle volunteers
+`CMD_ID_RSSI` several times a second while the link is up — 381 unsolicited
+reports in a 200 s capture — so "read the next report" returns link strength
+and a driver that trusts it reports RSSI as a battery level.
+
+### Commands
+
+From XPanel's own `CMD_ID_*` enum (`xpanel.finalmouse.com`, a WebHID app; the
+table is in the `BrPfhg39` chunk). 58 entries; the ones that matter here:
+
+| id | name | reply |
+|---|---|---|
+| `0x00` | `CMD_ID_HELLO` | empty |
+| `0x03` | `CMD_ID_ULX_GET_DPI` | u16 LE — read **1600** |
+| `0x04` | `CMD_ID_ULX_GET_POLLING_RATE` | u16 LE — read **2000** |
+| `0x05` | `CMD_ID_VBAT` | u16 LE millivolts — read **3956** |
+| `0x0d` | `CMD_ID_RSSI` | i8 dBm, **unsolicited** — read `0xe7` = −25 |
+| `0x16` | `CMD_ID_SQUAL` | sensor surface quality |
+| `0x24` | `CMD_ID_LINK_STATE` | `0` = mouse not linked |
+| `0x25` | `CMD_ID_BATTERY_CHARGING` | `0`/`1` |
+| `0x26` | `CMD_ID_BATTERY_STATUS` | `{soc, voltage_mv LE16}` |
+
+### What is and is not verified
+
+Verified on a `361d:0100` dongle: `VBAT` 3956 mV, `BATTERY_CHARGING` 0, DPI
+1600, polling rate 2000, `LINK_STATE` 0, and the unsolicited RSSI stream.
+
+**`CMD_ID_BATTERY_STATUS` never answers on this dongle** — captured with
+`LINK_STATE` at 1 as well as 0, so "the mouse was asleep" does not explain it;
+the firmware appears not to implement the command. It is the only source of a
+percentage. Its parse — `soc` at `[0]`, millivolts LE16 at `[1]` — is lifted
+from the vendor's code and has never been seen against a real reply.
+
+So a percentage is not available here. `VBAT` is, and it moves: 3956 mV on one
+capture and 3964 on a later one. Presence comes from `LINK_STATE`, which is an
+exchange with the dongle reporting whether the *mouse* is on the air — the
+thing enumeration alone cannot tell you.
+
+Converting volts to a percentage would need Finalmouse's discharge curve. It
+is not in the XPanel bundle anywhere this search could reach, and the Pulsar
+entry above is the standing reminder of what guessing one costs. The driver
+reports the voltage as the level instead.
+
+## Ninjutso Sora V2 — VID `0x1915`
+
+Nordic's vid, shared with Orbitalworks and the Starlight-12, so the driver
+requires both a Sora product id and the `0xffa0` usage page.
+
+Product ids, from the configurator's `soraV2` table (ninjaforce.co/sorav2, a
+Nuxt WebHID app): receivers `ae1c`, `ae8c`, `ae8a` (the last two are 8K);
+wired `ae11`-`ae13` (black/white/pink) and `ae14`-`ae16` (same colours, 3950
+sensor). The table also lists five `093a` (PixArt) ids, which are not claimed:
+nothing here shows they speak the same frames.
+
+### Wire format
+
+The vendor collection declares feature report `0x04` (703 B, config blobs) and
+`0x05` (31 B, commands). Requests are 31 zero bytes with the command at `[0]`,
+`0x01` at `[3]` and an argument at `[6]`. The reply comes back on the same
+feature report; in the raw 32-byte buffer (report id at `[0]`) the command is
+echoed at `[1]` and the argument at `[7]`. Byte 31 is a checksum that sums for
+some replies and not others; the vendor never checks it.
+
+| cmd | arg | reply |
+|---|---|---|
+| `0x15` | `4` | `[9]` level %, `[10]` charging, `[12]` mouse awake |
+| `0x28` | `2` | `[9..10]` LE16 wired pid of the paired mouse |
+| `0x09` | `0`/`4` | firmware version, mouse/receiver, `[9..12]` |
+
+`[12]` is the vendor's presence check: at zero it tells the user the device is
+asleep. A wired Sora is shown charging regardless of `[10]`.
+
+### What is and is not verified
+
+Verified on an `ae1c` receiver paired to an `ae11` mouse: level `0x55` = 85%,
+matching the configurator; charging 0; awake 1; paired pid `ae11`. Not seen: the
+wired ids, the 8K receivers, `[10]` at 1, `[12]` at 0.
+
 ## Razer — VID `0x1532`
 
 Not yet verified on hardware (no Razer device present during discovery).

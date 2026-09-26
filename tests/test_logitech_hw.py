@@ -37,7 +37,7 @@ def test_unified_battery_charging_flag():
 def test_reply_matching_accepts_our_own_request():
     """Devices emit unsolicited notifications on the same channel, so replies
     are matched on device/feature/function rather than 'next report wins'."""
-    assert logitech.matches_request(
+    assert logitech.addresses_request(
         _reply(bytes([91, 0, 0, 0])), DEVICE_INDEX, FEATURE_INDEX, 0x01
     )
 
@@ -45,13 +45,13 @@ def test_reply_matching_accepts_our_own_request():
 def test_reply_matching_rejects_another_devices_notification():
     other = bytearray(_reply(bytes([50, 0, 0, 0])))
     other[1] = 0x02  # different receiver slot
-    assert not logitech.matches_request(
+    assert not logitech.addresses_request(
         bytes(other), DEVICE_INDEX, FEATURE_INDEX, 0x01
     )
 
 
 def test_reply_matching_rejects_a_different_feature():
-    assert not logitech.matches_request(
+    assert not logitech.addresses_request(
         _reply(bytes([91, 0, 0, 0]), feature_index=9), DEVICE_INDEX, FEATURE_INDEX, 0x01
     )
 

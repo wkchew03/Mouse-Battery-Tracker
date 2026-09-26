@@ -97,3 +97,33 @@ def test_ignores_collections_without_a_feature_channel(monkeypatch):
 def test_ignores_non_vendor_pages(monkeypatch):
     monkeypatch.setattr(compx, "has_feature_channel", lambda info: True)
     assert compx.CompxDriver().candidates([_info(0x0001, b"m", usage=2)]) == []
+
+
+# --------------------------------------------------------------------------
+# G-Wolves shares the platform under a different vendor id
+# --------------------------------------------------------------------------
+
+# Captured from a G-Wolves HTS Ultra 8K receiver (33e4:0017) at 100%.
+GWOLVES_AT_100 = _pad([0x00, 0xA1, 0x00, 0x02, 0x02, 0x00, 0x83, 0x00, 0x64])
+
+
+def test_gwolves_reply_parses_identically():
+    """Same firmware platform, same 0xA1 frame -- only the vendor id differs."""
+    assert compx.parse_battery(GWOLVES_AT_100) == Reading(
+        online=True, percent=100, charging=False
+    )
+
+
+def test_gwolves_vendor_is_claimed(monkeypatch):
+    monkeypatch.setattr(compx, "has_feature_channel", lambda info: True)
+    info = _info(0xFFFF, b"gw", usage=0, interface=2)
+    info["vendor_id"] = compx.VENDOR_GWOLVES
+    info["product_id"] = 0x0017
+    assert compx.CompxDriver().candidates([info])
+
+
+def test_unrelated_vendor_is_not_claimed(monkeypatch):
+    monkeypatch.setattr(compx, "has_feature_channel", lambda info: True)
+    info = _info(0xFFFF, b"other", usage=0, interface=2)
+    info["vendor_id"] = 0x1532  # Razer
+    assert compx.CompxDriver().candidates([info]) == []

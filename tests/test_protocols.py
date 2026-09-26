@@ -191,10 +191,10 @@ def test_logitech_error_detection():
 def test_logitech_matches_request_rejects_notifications():
     # A notification uses software id 0, so it must not be mistaken for a reply.
     notification = bytes([0x11, 0xFF, 0x06, 0x10] + [0] * 16)
-    assert not logitech.matches_request(notification, 0xFF, 0x06, 0x01)
+    assert not logitech.addresses_request(notification, 0xFF, 0x06, 0x01)
 
     reply = bytes([0x11, 0xFF, 0x06, (0x01 << 4) | logitech.SOFTWARE_ID] + [0] * 16)
-    assert logitech.matches_request(reply, 0xFF, 0x06, 0x01)
+    assert logitech.addresses_request(reply, 0xFF, 0x06, 0x01)
 
 
 def test_logitech_unified_battery():

@@ -90,11 +90,6 @@ class Descriptor:
     reports: dict[int, ReportSizes] = field(default_factory=dict)
     usage_pages: list[int] = field(default_factory=list)
 
-    @property
-    def uses_report_ids(self) -> bool:
-        """False when the device uses a single unnumbered report."""
-        return set(self.reports) != {0}
-
     def has_battery_usage(self) -> bool:
         """True if the descriptor references a standard battery usage page."""
         return 0x85 in self.usage_pages

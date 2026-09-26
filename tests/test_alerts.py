@@ -130,3 +130,76 @@ def test_run_key_is_current_user_only():
     """HKCU only -- this must never touch machine-wide autostart."""
     assert "CurrentVersion\\Run" in autostart.RUN_KEY
     assert "HKEY_LOCAL_MACHINE" not in autostart.RUN_KEY
+
+
+# --------------------------------------------------------------------------
+# The threshold and the switch are settings now, not constants
+# --------------------------------------------------------------------------
+
+
+def test_notifications_can_be_switched_off(tmp_path):
+    app = _app(tmp_path)
+    app.store.set_notify_low(False)
+    app._check_low_battery(_online(3))
+    assert app.icon.notifications == []
+
+
+def test_switching_notifications_back_on_re_arms(tmp_path):
+    """Turning them off must not leave a mouse permanently marked as warned --
+    it dropped low while nobody was listening, so it is still news."""
+    app = _app(tmp_path)
+    app._check_low_battery(_online(5))
+    assert len(app.icon.notifications) == 1
+
+    app.store.set_notify_low(False)
+    app._check_low_battery(_online(5))
+    app.store.set_notify_low(True)
+    app._check_low_battery(_online(5))
+    assert len(app.icon.notifications) == 2
+
+
+def test_custom_threshold_is_honoured(tmp_path):
+    app = _app(tmp_path)
+    app.store.set_alert_threshold(40)
+
+    # Quiet under the default 15, but this user asked to hear about 35%.
+    app._check_low_battery(_online(35))
+    assert len(app.icon.notifications) == 1
+    assert "35%" in app.icon.notifications[0][1]
+
+
+def test_clear_level_follows_the_threshold(tmp_path):
+    """The hysteresis margin is relative, so a 40% threshold clears at 50 --
+    a fixed 25 would have re-armed the warning while still below it."""
+    app = _app(tmp_path)
+    app.store.set_alert_threshold(40)
+    app._check_low_battery(_online(30))
+    assert len(app.icon.notifications) == 1
+
+    app._check_low_battery(_online(45))  # above threshold, below clear
+    app._check_low_battery(_online(30))
+    assert len(app.icon.notifications) == 1
+
+    app._check_low_battery(_online(app.store.alert_clear + 1))
+    app._check_low_battery(_online(30))
+    assert len(app.icon.notifications) == 2
+
+
+# --------------------------------------------------------------------------
+# Legacy identity migration -- checked every poll, not just at startup,
+# because some identities (Logitech's unit id) are only knowable after a
+# device has actually answered once.
+# --------------------------------------------------------------------------
+
+
+def test_poll_once_folds_a_newly_resolved_identity(tmp_path):
+    app = _app(tmp_path)
+    app.store.update("old:1", "Mouse", Reading(online=True, percent=50))
+    app.store.set_display_name("old:1", "My Named Mouse")
+
+    with patch("mbt.app.legacy_aliases", return_value={"old:1": "new:1"}):
+        app.provider = lambda: [("new:1", "Generic Label", Reading(online=True, percent=51))]
+        app.poll_once()
+
+    assert "old:1" not in app.store.records
+    assert app.store.display_name("new:1") == "My Named Mouse"

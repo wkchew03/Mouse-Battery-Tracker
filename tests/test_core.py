@@ -6,12 +6,19 @@ each driver lands.
 
 from pathlib import Path
 
+import time
+
 import pytest
 
 from mbt.app import mock_provider
 from mbt.drivers.base import Reading, device_key, is_placeholder_serial
-from mbt.store import DeviceRecord, Store, format_age
-from mbt.theme import dim
+from mbt.store import (
+    MAX_ALERT_THRESHOLD,
+    MIN_ALERT_THRESHOLD,
+    DeviceRecord,
+    Store,
+    format_age,
+)
 from mbt.tray import TrayApp, level_color, render_icon
 
 
@@ -53,7 +60,10 @@ def test_device_key(info, expected):
         (300, "5m ago"),
         (3600 * 3, "3h ago"),
         (86400 * 2, "2d ago"),
-        (86400 * 14, "2w ago"),
+        (86400 * 14, "14d ago"),
+        # Past a week still counts in days -- the old code said "3w ago" here.
+        (86400 * 23.7, "23d ago"),
+        (86400 * 400, "400d ago"),
     ],
 )
 def test_format_age(seconds, expected):
@@ -131,40 +141,122 @@ def test_level_color_thresholds():
     assert level_color(5, charging=True) != level_color(5)
 
 
-def test_dim_darkens_every_channel():
-    """Disconnected mice were rendering in the same full-brightness colour as
-    the connected one, so the two were indistinguishable."""
-    bright = level_color(90)
-    dimmed = dim(bright)
-    assert dimmed != bright
-    for channel in range(3):
-        assert dimmed[channel] < bright[channel]
-
-
-def test_dim_preserves_hue_so_the_level_still_reads():
-    """A stale 45% should still look amber, not grey."""
-    amber = dim(level_color(45))
-    green = dim(level_color(90))
-    assert amber != green
-    # Amber stays red-dominant, green stays green-dominant.
-    assert amber[0] > amber[2]
-    assert green[1] > green[0]
-
-
-def test_dim_keeps_alpha():
-    assert dim(level_color(50))[3] == level_color(50)[3]
-
-
-def test_dim_stays_visible_against_the_card():
-    """Too dark and the bar disappears into the card background."""
-    card = (42, 44, 51)
-    for percent in (10, 50, 100):
-        dimmed = dim(level_color(percent))
-        assert sum(dimmed[:3]) > sum(card) + 30
-
-
 @pytest.mark.parametrize("percent", [None, 5, 68, 100])
 def test_render_icon(percent):
     image = render_icon(percent)
     assert image.size == (64, 64)
     assert image.mode == "RGBA"
+
+
+# --------------------------------------------------------------------------
+# Absolute timestamps and the settings file
+# --------------------------------------------------------------------------
+
+
+def test_settings_default_when_the_file_is_absent(tmp_path):
+    store = Store(directory=tmp_path)
+    store.load()
+    assert store.alert_threshold == 15
+    assert store.notify_low is True
+    assert store.alert_clear == 25
+
+
+def test_settings_round_trip(tmp_path):
+    store = Store(directory=tmp_path)
+    store.load()
+    store.set_alert_threshold(35)
+    store.set_notify_low(False)
+
+    reloaded = Store(directory=tmp_path)
+    reloaded.load()
+    assert reloaded.alert_threshold == 35
+    assert reloaded.notify_low is False
+
+
+def test_threshold_is_clamped_to_something_useful(tmp_path):
+    store = Store(directory=tmp_path)
+    store.load()
+    assert store.set_alert_threshold(0) == MIN_ALERT_THRESHOLD
+    assert store.set_alert_threshold(999) == MAX_ALERT_THRESHOLD
+
+
+def test_a_corrupt_settings_file_falls_back_per_field(tmp_path):
+    """A bad value must not disable the alert -- silence is the one failure
+    mode nobody notices until the mouse is flat."""
+    (tmp_path / "settings.json").write_text(
+        '{"alert_threshold": "twenty", "notify_low": true}', encoding="utf-8"
+    )
+    store = Store(directory=tmp_path)
+    store.load()
+    assert store.alert_threshold == 15
+    assert store.notify_low is True
+
+
+# --------------------------------------------------------------------------
+# merge_aliases -- folding a device's old identity key into a new one
+# --------------------------------------------------------------------------
+
+
+def test_merge_aliases_moves_an_orphaned_record_to_the_new_key(tmp_path):
+    store = Store(directory=tmp_path)
+    store.update("old:1", "Mouse", Reading(online=True, percent=50))
+
+    merged = store.merge_aliases({"old:1": "new:1"})
+    assert merged == 1
+    assert "old:1" not in store.records
+    assert store.records["new:1"].percent == 50
+
+
+def test_merge_aliases_combines_history_instead_of_discarding_the_loser(tmp_path):
+    """The real-world case: a mouse migrates to a new identity key (Logitech's
+    unit id, once read) while it already has months of drain-rate samples
+    under the old one. Picking "whichever record is newer" and throwing the
+    other away would silently erase that history."""
+    store = Store(directory=tmp_path)
+
+    old_ts = 1_000_000.0
+    new_ts = 2_000_000.0
+    store.records["old:1"] = DeviceRecord(
+        key="old:1",
+        label="Logitech G PRO X SUPERLIGHT 2",
+        percent=79,
+        last_online=old_ts,
+        history=[[old_ts - 3600, 80], [old_ts, 79]],
+    )
+    store.records["new:1"] = DeviceRecord(
+        key="new:1",
+        label="Logitech USB Receiver",
+        percent=80,
+        last_online=new_ts,
+        history=[[new_ts, 80]],
+    )
+
+    store.merge_aliases({"old:1": "new:1"})
+
+    assert "old:1" not in store.records
+    survivor = store.records["new:1"]
+    # The live fields come from whichever side actually answered more
+    # recently -- here, the new key's own reading.
+    assert survivor.percent == 80
+    assert survivor.last_online == new_ts
+    # But nothing from the losing side's timeline is dropped.
+    assert survivor.history == [[old_ts - 3600, 80], [old_ts, 79], [new_ts, 80]]
+
+
+def test_merge_aliases_folds_the_display_name_onto_the_new_key(tmp_path):
+    store = Store(directory=tmp_path)
+    store.update("old:1", "Logitech USB Receiver", Reading(online=True, percent=50))
+    store.update("new:1", "Logitech USB Receiver", Reading(online=True, percent=51))
+    store.set_display_name("old:1", "Logitech G PRO X SUPERLIGHT 2")
+
+    store.merge_aliases({"old:1": "new:1"})
+
+    assert "old:1" not in store.names
+    assert store.display_name("new:1") == "Logitech G PRO X SUPERLIGHT 2"
+
+
+def test_merge_aliases_does_nothing_when_the_old_key_is_absent(tmp_path):
+    store = Store(directory=tmp_path)
+    store.update("new:1", "Mouse", Reading(online=True, percent=50))
+    assert store.merge_aliases({"old:1": "new:1"}) == 0
+    assert store.records["new:1"].percent == 50

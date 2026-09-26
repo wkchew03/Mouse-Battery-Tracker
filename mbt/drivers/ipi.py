@@ -135,17 +135,6 @@ def parse_basic_info(response: bytes) -> Reading:
     return Reading(online=True)
 
 
-def max_dpi(response: bytes) -> int | None:
-    """Sensor maximum DPI, used to sanity-check that field offsets are right.
-
-    The vendor computes `a[9] + a[10] * 255`, which is an off-by-one: with 256
-    the Float 88 yields exactly 26000, matching its 26K sensor.
-    """
-    if len(response) < 12:
-        return None
-    return response[10] + response[11] * 256
-
-
 class IpiDriver:
     name = "ipi"
     vendor_ids = frozenset({VENDOR_IPI})

@@ -8,6 +8,9 @@ Two files under %APPDATA%\\MouseBatteryTracker:
 - names.json  user-assigned display names. These devices report useless product
               strings ("PIAO-2.4G", "Gaming Mouse 8K"), so the UI needs a way to
               call a mouse what the user calls it.
+- settings.json  the handful of preferences the HUD exposes. Separate from
+              state.json so toggling a checkbox does not rewrite the whole
+              history file, which is two orders of magnitude larger.
 
 Writes are atomic (temp file + os.replace) because the tray app can be killed at
 any moment, and a half-written state file would lose every device's history.
@@ -21,8 +24,32 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import APP_NAME
+from . import APP_NAME, history
 from .drivers.base import Reading
+
+
+# Preferences the HUD exposes. Defined here rather than in tray.py so the HUD
+# can read and write them without importing the tray -- the two run on
+# different threads and must not depend on each other.
+DEFAULT_SETTINGS = {
+    # Percentage at which the low-battery notification fires.
+    "alert_threshold": 15,
+    # Whether it fires at all.
+    "notify_low": True,
+}
+
+# How far a mouse must climb back above the threshold before it can warn again.
+# Without the margin a level resting on the boundary notifies every poll.
+ALERT_CLEAR_MARGIN = 10
+
+# A threshold outside this range is not a preference, it is a mistake: 0 never
+# fires and 90 fires constantly.
+MIN_ALERT_THRESHOLD = 5
+MAX_ALERT_THRESHOLD = 50
+
+
+def clamp_threshold(value: int) -> int:
+    return max(MIN_ALERT_THRESHOLD, min(MAX_ALERT_THRESHOLD, int(value)))
 
 
 def app_dir() -> Path:
@@ -44,6 +71,9 @@ class DeviceRecord:
     last_online: float = 0.0
     # Last time we recorded anything at all for it.
     last_update: float = field(default_factory=time.time)
+    # [[timestamp, percent], ...] recorded on change only; see history.py.
+    # Records saved before this existed simply start empty.
+    history: list = field(default_factory=list)
 
     def describe_last_known(self) -> str:
         """Last known level, for the "Recently used" list.
@@ -62,8 +92,6 @@ class DeviceRecord:
 
 def format_age(seconds: float) -> str:
     """Compact relative time for the tray menu."""
-    if seconds < 0:
-        return "just now"
     if seconds < 90:
         return "just now"
     minutes = seconds / 60
@@ -72,10 +100,10 @@ def format_age(seconds: float) -> str:
     hours = minutes / 60
     if hours < 24:
         return f"{int(hours)}h ago"
-    days = hours / 24
-    if days < 7:
-        return f"{int(days)}d ago"
-    return f"{int(days / 7)}w ago"
+    # Days all the way up rather than switching to weeks: "3w ago" reads as
+    # vaguer than it is, and the exact figure is the point of the line -- it is
+    # how you tell a mouse you rotated out last month from one you lost.
+    return f"{int(hours / 24)}d ago"
 
 
 class Store:
@@ -83,8 +111,10 @@ class Store:
         self.directory = directory or app_dir()
         self.state_file = self.directory / "state.json"
         self.names_file = self.directory / "names.json"
+        self.settings_file = self.directory / "settings.json"
         self.records: dict[str, DeviceRecord] = {}
         self.names: dict[str, str] = {}
+        self.settings: dict = dict(DEFAULT_SETTINGS)
 
     # ---- io -------------------------------------------------------------
 
@@ -101,6 +131,53 @@ class Store:
                 continue
         names = _read_json(self.names_file, {})
         self.names = {k: v for k, v in names.items() if isinstance(v, str)}
+        self.settings = self._load_settings()
+
+    def _load_settings(self) -> dict:
+        """Defaults overlaid with whatever the file has, field by field.
+
+        A settings file written by a newer version, hand-edited, or truncated
+        mid-write must not take the app down or silently disable an alert, so
+        every value is validated on its own and a bad one falls back.
+        """
+        settings = dict(DEFAULT_SETTINGS)
+        raw = _read_json(self.settings_file, {})
+        if not isinstance(raw, dict):
+            return settings
+        if isinstance(raw.get("notify_low"), bool):
+            settings["notify_low"] = raw["notify_low"]
+        try:
+            settings["alert_threshold"] = clamp_threshold(raw["alert_threshold"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        return settings
+
+    def save_settings(self) -> None:
+        _write_json(self.settings_file, self.settings)
+
+    # ---- settings accessors ---------------------------------------------
+
+    @property
+    def alert_threshold(self) -> int:
+        return clamp_threshold(self.settings.get("alert_threshold", 15))
+
+    @property
+    def alert_clear(self) -> int:
+        """Level at which a warned mouse becomes eligible to warn again."""
+        return min(100, self.alert_threshold + ALERT_CLEAR_MARGIN)
+
+    @property
+    def notify_low(self) -> bool:
+        return bool(self.settings.get("notify_low", True))
+
+    def set_alert_threshold(self, value: int) -> int:
+        self.settings["alert_threshold"] = clamp_threshold(value)
+        self.save_settings()
+        return self.settings["alert_threshold"]
+
+    def set_notify_low(self, enabled: bool) -> None:
+        self.settings["notify_low"] = bool(enabled)
+        self.save_settings()
 
     def save(self) -> None:
         payload = {}
@@ -130,6 +207,7 @@ class Store:
             record.last_online = now
             if reading.percent is not None:
                 record.percent = reading.percent
+                record.history = history.record(record.history, now, reading.percent)
             if reading.bucket is not None:
                 record.bucket = reading.bucket
             record.charging = reading.charging
@@ -153,10 +231,20 @@ class Store:
             if existing is None:
                 old.key = new_key
                 self.records[new_key] = old
-            elif old.last_online > existing.last_online:
-                old.key = new_key
-                old.label = existing.label or old.label
-                self.records[new_key] = old
+            else:
+                # Whichever side actually answered more recently wins the
+                # live fields (percent, charging, ...), but the combined
+                # timeline is kept either way -- otherwise the record that
+                # loses gets its whole drain-rate history discarded, and a
+                # mouse with months of samples looks brand new.
+                merged_history = history.merge(old.history, existing.history)
+                if old.last_online > existing.last_online:
+                    old.key = new_key
+                    old.label = existing.label or old.label
+                    old.history = merged_history
+                    self.records[new_key] = old
+                else:
+                    existing.history = merged_history
             if old_key in self.names:
                 self.names.setdefault(new_key, self.names.pop(old_key))
         if merged:

@@ -56,7 +56,30 @@ CMD_POWER = 0x04  # rt.BatteryLevel in the vendor bundle
 
 # Newer "Pulsar 8K Dongle" platform, e.g. the X2 CrazyLight.
 VENDOR_PULSAR_8K = 0x3710
-VENDOR_IDS = frozenset({VENDOR_PULSAR, VENDOR_PULSAR_8K})
+# Hitscan uses the same receiver platform: identical collection layout, frame
+# format and checksum. Only the battery scaling differs -- see below.
+VENDOR_HITSCAN = 0x3770
+
+VENDOR_IDS = frozenset({VENDOR_PULSAR, VENDOR_PULSAR_8K, VENDOR_HITSCAN})
+
+# The whole platform derives its displayed percentage from cell voltage, not
+# from the level byte the receiver reports. Confirmed against both vendors'
+# own software, and in both cases the level byte disagreed:
+#
+#   Pulsar X2N   level 95%, 4122 mV -> their app says 100%, curve says 100%
+#   Hitscan      level 70%, 4176 mV -> their app says 100%, curve says 100%
+#
+# So the level byte is the unreliable one. This was initially restricted to
+# Pulsar out of caution about applying one vendor's calibration to another's
+# cells; the Hitscan reading settled it the other way.
+VOLTAGE_CURVE_VENDORS = VENDOR_IDS
+
+# Identity namespace per vendor, so two brands cannot collide on one address.
+IDENTITY_PREFIXES = {
+    VENDOR_PULSAR: "pulsar",
+    VENDOR_PULSAR_8K: "pulsar",
+    VENDOR_HITSCAN: "hitscan",
+}
 
 # The dongle exposes several vendor collections; only this one carries the
 # command channel (report 0x08, 16-byte input and output). The others are
@@ -69,7 +92,6 @@ READ_TIMEOUT_MS = 250
 # 0xf507 wired / 0xf508 2.4GHz dongle are the documented Pulsar ids; the
 # lineup has grown, so any known-vendor device with a vendor collection is
 # accepted.
-KNOWN_PIDS = (0xF507, 0xF508)
 
 
 # Pulsar's configurator does not display the level the mouse reports. It derives
@@ -156,11 +178,12 @@ def parse_device_online(response: bytes) -> tuple[bool, str | None]:
     return online, address.hex()
 
 
-def device_identity(address: str) -> str:
-    return f"pulsar:{address}"
+def device_identity(address: str, vendor_id: int = VENDOR_PULSAR_8K) -> str:
+    prefix = IDENTITY_PREFIXES.get(vendor_id, "compxrf")
+    return f"{prefix}:{address}"
 
 
-def parse_power(response: bytes) -> Reading:
+def parse_power(response: bytes, use_voltage_curve: bool = True) -> Reading:
     """Decode a POWER (0x04) response.
 
     Layout: [0]=report id, [1]=command echo, [6]=percent,
@@ -180,8 +203,9 @@ def parse_power(response: bytes) -> Reading:
         return OFFLINE
 
     # Prefer the vendor's voltage curve so the number matches their software;
-    # fall back to the level the mouse reports if no voltage came back.
-    if millivolts:
+    # fall back to the level the mouse reports if no voltage came back, or if
+    # this vendor has no curve of its own.
+    if use_voltage_curve and millivolts:
         percent = percent_from_voltage(millivolts, charging)
 
     return Reading(
@@ -270,12 +294,20 @@ class PulsarDriver:
             power_reply = self._exchange(dev, CMD_POWER)
 
         address = self._addresses.get(dongle)
-        reading = OFFLINE if power_reply is None else parse_power(power_reply)
+        vendor_id = info.get("vendor_id") or 0
+        use_curve = vendor_id in VOLTAGE_CURVE_VENDORS
+        reading = (
+            OFFLINE
+            if power_reply is None
+            else parse_power(power_reply, use_curve)
+        )
 
         # Tag offline readings too. Otherwise a sleeping mouse falls back to the
         # dongle key and appears as a second, phantom entry alongside itself.
         if address:
-            return replace(reading, device_id=device_identity(address))
+            return replace(
+                reading, device_id=device_identity(address, vendor_id)
+            )
         return reading
 
 

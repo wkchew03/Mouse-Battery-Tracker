@@ -7,8 +7,10 @@ configurator just to check a percentage.
 - **Read-only.** It never writes settings, and it opens and closes the device
   around each read, so it coexists with vendor software rather than fighting it.
 - **Light.** ~45 MB RAM and effectively 0% CPU between polls (default: 60 s).
-  No GPU context, no web view, no bundled browser.
-- **Six brands verified against their own vendor software.**
+  No GPU context, no web view, no bundled browser. The detail window's drifting
+  background is one pre-rendered image being panned, so it costs a coordinate
+  change per frame and only while the window is actually open.
+- **Seven brands verified against their own vendor software.**
 
 ## Install
 
@@ -35,11 +37,16 @@ Tick **Start with Windows** in the tray menu to launch it at login.
 
 - **Tray icon** showing the connected mouse's percentage, with a tooltip listing
   every mouse.
-- **Detail window** (left-click the icon): a hero card for the connected mouse
-  with a ring gauge, plus a history grid of previously seen mice with their last
-  known level and when they were last seen. Scrolls; rename a mouse or set a
-  custom picture by clicking its name or image.
-- **Low-battery alert** at 15%, once per discharge cycle rather than every poll.
+- **Detail window** (left-click the icon): two columns. The connected mouse is
+  pinned on the left with its level, a chart of the current discharge and
+  whatever drain estimate the data supports; every mouse it remembers sits on
+  the right as a shelf of cards showing its picture, last known level and how
+  long ago that was. Hover the chart to read any point. The shelf scrolls by
+  wheel with no scrollbar. Rename a mouse or set a custom picture by clicking
+  its name or image; the gear in the panel holds the alert settings.
+- **Low-battery alert**, once per discharge cycle rather than every poll. The
+  threshold and whether it fires at all are set in the detail window; a warned
+  mouse must climb 10 points above the threshold before it can warn again.
 - **Stream Deck plugin** (optional) — see `streamdeck/`.
 
 ### Other commands
@@ -101,7 +108,7 @@ Three things that cost real time on this project:
 - **Listen for minutes, not seconds.** A device that seems silent may be on a
   30-second heartbeat. A 12-second listen produced a false negative that sent
   the IPI investigation down a dead end for ~25 speculative writes.
-- **If the vendor software is web-based, read its JavaScript.** Four of the six
+- **If the vendor software is web-based, read its JavaScript.** Five of the seven
   protocols came straight out of a WebHID bundle. That is far faster and safer
   than guessing at command bytes.
 
@@ -112,30 +119,50 @@ Three things that cost real time on this project:
 | Logitech (`046d`) | HID++ 2.0, feature `0x1004` | G Pro X Superlight 2 — Onboard Memory Manager |
 | Razer (`1532`) | 90-byte report, class `0x07`/`0x80` | Viper V3 Pro — Synapse |
 | Pulsar (`3710`, `3554`) | 17-byte frames, report 8, cmd `0x04` | X2N + TenZ — bbb.pulsar.gg |
+| Hitscan (`3770`) | same platform as Pulsar | Hyperlight — Hitscan Utility |
 | IPI (`372e`) | `get_basic_info`, report `0x03` | Float 88 — shan.ipigame.cn |
 | Orbitalworks (`1915`) | 64-byte reports, cmd `0x81` | Pathfinder V1 — orbital-web-ctrl |
-| CompX gen 2 (`373e`) | 64-byte feature reports, opcode `0x83` | CRDRAKO KO-ONE — panel.crdrako.com |
+| VAXEE (`3057`) | feature report `0x0e`, cmd `0x0b`, 0-20 step | XE-S Wireless — VAXEE Control Center |
+| Ninjutso (`1915`) | feature report `0x05`, cmd `0x15` | Sora V2 — ninjaforce.co configurator |
+| Finalmouse (`361d`) | 64-byte reports, `0x80`-marked commands | UltralightX — XPanel (voltage, charging, DPI, polling rate) |
+| CompX gen 2 (`373e`, `33e4`) | 64-byte feature reports, opcode `0x83` | CRDRAKO KO-ONE, G-Wolves HTS Ultra |
 
 Every percentage above was cross-checked against the vendor's own software, not
 just "the driver returned a number". That distinction caught two bugs that a
 plausible-looking reading would have hidden.
 
+### Detected, but no battery level
+
+- **ZOWIE U2-DW** (`04a5:800a`) — appears in the tray and the HUD as *no
+  battery data*. It has a vendor channel (`0xff03` out / `0xff04` in) but never
+  answers and never volunteers anything, across ~5 minutes of passive capture,
+  and there is no vendor software or public protocol to copy from. Presence
+  therefore comes from USB enumeration alone: unlike every other driver, it
+  cannot tell an awake mouse from a receiver left plugged in with the mouse
+  switched off, so "last active" tracks the dongle rather than the mouse.
+  Remaining lead: capture its firmware update tool.
+
 ### Not supported
 
-- **Zowie U2-DW** (`04a5:800a`) — has a vendor channel (`0xff03` out / `0xff04`
-  in) but never answers and never volunteers anything, across ~5 minutes of
-  passive capture. No vendor software and no public protocol to copy from.
-  Remaining lead: capture its firmware update tool.
 - **Finalmouse Starlight-12** (`1915:f6b0`) — not possible. Its receiver's
   entire report descriptor is 64 bytes of plain mouse: no vendor collection, no
-  feature or output reports, nowhere to send a query.
+  feature or output reports, nowhere to send a query. Note this is Nordic's vid
+  and says nothing about the UltralightX, which is on Finalmouse's own `361d`
+  and is supported.
 
-### A note on Pulsar percentages
+### A note on Pulsar / Hitscan percentages
 
-Pulsar's configurator does not display the level the mouse reports. It derives
-one from cell voltage via a lookup table and treats anything above 4110 mV as
-100%. This app follows their curve so the numbers agree with their software; the
-mouse's own figure reads ~5 points lower near full charge. Raw millivolts are
+Neither vendor's software displays the level byte the receiver reports. Both
+derive the figure from cell voltage via a lookup table that treats anything
+above 4110 mV as 100%, and in both cases the level byte disagreed with what the
+vendor showed:
+
+| device | level byte | voltage | vendor software |
+|---|---|---|---|
+| Pulsar X2N | 95% | 4122 mV | 100% |
+| Hitscan Hyperlight | 70% | 4176 mV | 100% |
+
+So this app uses the voltage curve for the whole platform. Raw millivolts are
 kept on the reading either way.
 
 ## Tests

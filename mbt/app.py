@@ -17,11 +17,8 @@ from .drivers.base import (
     DeviceInfo,
     Driver,
     Reading,
-    collapse_duplicates,
     describe_device,  # noqa: F401  (re-exported)
     device_key,
-    resolve_identity,
-    resolve_label,
 )
 
 
@@ -55,28 +52,18 @@ def read_all() -> list[tuple[str, str, Reading]]:
     Keyed by physical-mouse identity, so a mouse that can run wired or wireless
     reports under one entry instead of one per USB product id.
     """
-    collected: list[tuple[str, str, Reading]] = []
-    for driver, info in discover():
-        key = resolve_identity(driver, info)
-        label = resolve_label(driver, info)
-        try:
-            reading = driver.read(info)
-        except Exception:
-            reading = OFFLINE
-        # A device that can name itself wins over the USB-derived key.
-        collected.append((reading.device_id or key, label, reading))
+    # A fresh poller has no backoff, so every device is read.
+    from .poller import Poller
 
-    return collapse_duplicates(collected)
+    return Poller().poll()
 
 
 def legacy_aliases() -> dict[str, str]:
     """Every driver's old-key -> merged-identity map, combined."""
     aliases: dict[str, str] = {}
     for driver in all_drivers():
-        getter = getattr(driver, "legacy_aliases", None)
-        if getter is None:
-            module = type(driver).__module__
-            getter = getattr(sys.modules.get(module), "legacy_aliases", None)
+        module = sys.modules.get(type(driver).__module__)
+        getter = getattr(module, "legacy_aliases", None)
         if getter is None:
             continue
         try:

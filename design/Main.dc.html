@@ -1,0 +1,311 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; font-family: "Segoe UI", system-ui, -apple-system, sans-serif; }
+    a { color: #7fd8cd; } a:hover { color: #a5e6de; }
+    .num { font-variant-numeric: tabular-nums; }
+
+    .mouse { position: relative; overflow: hidden; box-sizing: border-box;
+             border-radius: 46% 46% 42% 42% / 34% 34% 30% 30%; }
+    .mouse .fill { position: absolute; left: 0; right: 0; bottom: 0; }
+    .mouse .wheel { position: absolute; left: 50%; top: 14%; width: 2.5px; height: 22%;
+                    margin-left: -1.25px; border-radius: 2px; }
+
+    .blob { position: absolute; border-radius: 50%; pointer-events: none; }
+    .b1 { width: 660px; height: 660px; left: -220px; top: -260px; filter: blur(70px);
+          background: radial-gradient(circle, rgba(23,184,166,.5), rgba(23,184,166,0) 66%);
+          animation: sp1 30s ease-in-out infinite; }
+    .b2 { width: 640px; height: 540px; right: -160px; top: -140px; filter: blur(76px);
+          background: radial-gradient(circle, rgba(91,91,214,.52), rgba(91,91,214,0) 68%);
+          animation: sp2 36s ease-in-out infinite; }
+    .b3 { width: 520px; height: 520px; left: -140px; bottom: -260px; filter: blur(84px);
+          background: radial-gradient(circle, rgba(214,74,143,.34), rgba(214,74,143,0) 70%);
+          animation: sp3 42s ease-in-out infinite; }
+    .grain { position: absolute; inset: 0; pointer-events: none; opacity: .5;
+             background: repeating-linear-gradient(115deg, rgba(255,255,255,.018) 0 1px,
+                         rgba(255,255,255,0) 1px 4px); }
+
+    @keyframes sp1 { 0%,100% { transform: translate(0,0) scale(1); }
+                     50%     { transform: translate(170px,130px) scale(1.16); } }
+    @keyframes sp2 { 0%,100% { transform: translate(0,0) scale(1); }
+                     50%     { transform: translate(-120px,180px) scale(.86); } }
+    @keyframes sp3 { 0%,100% { transform: translate(0,0) scale(1); }
+                     50%     { transform: translate(180px,-110px) scale(1.2); } }
+    @media (prefers-reduced-motion: reduce) { .blob { animation: none; } }
+
+    .card { background: rgba(18,19,26,.56); border: 1px solid rgba(255,255,255,.08);
+            border-radius: 16px; padding: 15px 10px 13px; backdrop-filter: blur(20px);
+            display: flex; flex-direction: column; align-items: center;
+            transition: background .16s ease, border-color .16s ease; }
+    .card:hover { background: rgba(34,36,48,.74); border-color: rgba(255,255,255,.18); }
+
+    /* Hit targets are wider than the marks they cover. */
+    .hit { fill: transparent; cursor: crosshair; }
+  </style>
+</helmet>
+
+<div style="width: 900px; height: 600px; background: #0d0d12; position: relative; overflow: hidden;">
+
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+  <div class="grain"></div>
+
+  <div style="position: relative; width: 100%; height: 100%; box-sizing: border-box;
+              padding: 16px; display: flex; gap: 16px;">
+
+    <!-- ============ connected mouse ============ -->
+    <div style="width: 320px; flex-shrink: 0; background: rgba(16,17,24,.5);
+                border: 1px solid rgba(127,216,205,.5); border-radius: 18px;
+                backdrop-filter: blur(24px); box-sizing: border-box;
+                padding: 24px 20px 18px; display: flex; flex-direction: column; align-items: center;">
+
+      <div class="mouse" style="width: 82px; height: 128px; background: rgba(255,255,255,.08);
+                  border: 1.5px solid rgba(232,233,237,.85);">
+        <div class="fill" style="{{heroFill}}"></div>
+        <div class="wheel" style="background: #e8e9ed;"></div>
+      </div>
+
+      <div class="num" style="font-size: 54px; font-weight: 200; color: #ffffff; margin-top: 16px;
+                  line-height: 1; letter-spacing: -.03em;">{{level}}<span style="font-size: 24px; font-weight: 300; color: rgba(255,255,255,.5);">%</span></div>
+
+      <div style="font-size: 12.5px; color: rgba(232,233,237,.85); text-align: center;
+                  margin-top: 10px; line-height: 1.35;">Logitech G Pro X Superlight 2</div>
+
+      <div style="display: flex; align-items: center; gap: 6px; margin-top: 8px;">
+        <div style="width: 6px; height: 6px; border-radius: 3px; {{dotStyle}}"></div>
+        <div style="font-size: 11px; color: rgba(232,233,237,.62);">connected now · 2.4 GHz</div>
+      </div>
+
+      <div style="flex-grow: 1;"></div>
+
+      <!-- ============ discharge chart ============ -->
+      <div style="width: 100%; position: relative;">
+        <svg width="280" height="92" viewBox="0 0 280 92" role="img"
+             aria-label="Battery level over the current discharge, with the alert threshold marked"
+             style="display: block;">
+          <!-- recessive frame: baseline and the level the alert fires at -->
+          <line x1="0" y1="86" x2="280" y2="86" stroke="rgba(255,255,255,.14)" stroke-width="1"/>
+          <sc-if value="{{chart.ok}}" hint-placeholder-val="{{ true }}">
+            <path d="{{chart.area}}" fill="{{chart.areaFill}}"/>
+            <polyline points="{{chart.line}}" fill="none" stroke="{{chart.colour}}"
+                      stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+          </sc-if>
+
+          <line x1="0" y1="{{chart.alertY}}" x2="280" y2="{{chart.alertY}}"
+                stroke="rgba(255,255,255,.3)" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="0" y="{{chart.alertLabelY}}" font-size="8.5" fill="rgba(232,233,237,.5)"
+                font-family="Segoe UI, system-ui, sans-serif">alert {{threshold}}%</text>
+
+          <sc-if value="{{chart.ok}}" hint-placeholder-val="{{ true }}">
+            <circle cx="{{chart.endX}}" cy="{{chart.endY}}" r="4" fill="{{chart.colour}}"
+                    stroke="#0d0d12" stroke-width="2"/>
+
+            <sc-for list="{{chart.hits}}" as="h" hint-placeholder-count="7">
+              <rect class="hit" x="{{h.x}}" y="0" width="{{h.w}}" height="92"
+                    onMouseEnter="{{h.enter}}" onMouseLeave="{{h.leave}}"></rect>
+            </sc-for>
+
+            <sc-if value="{{chart.hoverOn}}" hint-placeholder-val="{{ false }}">
+              <line x1="{{chart.hoverX}}" y1="0" x2="{{chart.hoverX}}" y2="86"
+                    stroke="rgba(255,255,255,.3)" stroke-width="1"/>
+              <circle cx="{{chart.hoverX}}" cy="{{chart.hoverY}}" r="4.5"
+                      fill="{{chart.colour}}" stroke="#0d0d12" stroke-width="2"/>
+            </sc-if>
+          </sc-if>
+        </svg>
+
+        <div style="display: flex; justify-content: space-between; margin-top: 2px;">
+          <div style="font-size: 9px; color: rgba(232,233,237,.34);">{{chart.startLabel}}</div>
+          <div style="font-size: 9px; color: rgba(232,233,237,.34);">now</div>
+        </div>
+
+        <!-- The tooltip only ever names one point, never every point. -->
+        <div style="{{chart.tipStyle}} position: absolute; padding: 3px 8px;
+                    border-radius: 6px; background: rgba(8,9,13,.94); border: 1px solid rgba(255,255,255,.12);
+                    font-size: 10px; white-space: nowrap; pointer-events: none;
+                    color: rgba(232,233,237,.9);">{{chart.tipText}}</div>
+      </div>
+
+      <div class="num" style="width: 100%; font-size: 11px; color: {{summaryColour}};
+                  margin-top: 8px; text-align: center;">{{summaryText}}</div>
+    </div>
+
+    <!-- ============ history shelf ============ -->
+    <div style="flex-grow: 1; min-width: 0; position: relative;">
+      <div style="position: absolute; inset: 0; display: grid;
+                  grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+                  align-content: start; overflow: hidden;">
+        <sc-for list="{{cards}}" as="c" hint-placeholder-count="12">
+          <div class="card">
+            <div class="mouse" style="width: 36px; height: 56px; {{c.shell}}">
+              <div class="fill" style="{{c.fill}}"></div>
+              <div class="wheel" style="{{c.wheel}}"></div>
+            </div>
+            <div style="font-size: 11px; color: rgba(232,233,237,.84); margin-top: 11px; text-align: center;
+                        width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{c.name}}</div>
+            <div style="display: flex; align-items: baseline; gap: 6px; margin-top: 5px;">
+              <div class="num" style="font-size: 13px; font-weight: 600; color: {{c.colour}};">{{c.pct}}</div>
+              <div class="num" style="font-size: 11px; color: rgba(232,233,237,.45);">{{c.age}}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 56px; pointer-events: none;
+                  background: linear-gradient(to bottom, rgba(13,13,18,0), rgba(13,13,18,.94));"></div>
+    </div>
+  </div>
+</div>
+</x-dc>
+
+<script data-dc-script data-props='{"level":{"editor":"range","default":75,"min":5,"max":100,"step":5,"unit":"%","section":"State"},"enoughData":{"editor":"boolean","default":true,"section":"State"},"$preview":{"width":900,"height":600}}'>
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { hover: null };
+  }
+
+  // theme.py: level_color(), THRESHOLD_HIGH 50 / THRESHOLD_LOW 20.
+  colour(lvl) {
+    if (lvl === null) return '#8c8c94';
+    return lvl >= 50 ? '#4cbb6a' : lvl >= 20 ? '#e8a838' : '#de4a3e';
+  }
+
+  // history.py: describe_rate() / describe_remaining(), same thresholds.
+  describeRate(perHour) {
+    if (perHour >= 1) return perHour.toFixed(1) + '%/h';
+    const perDay = perHour * 24;
+    return perDay < 0.1 ? null : perDay.toFixed(1) + '%/day';
+  }
+
+  describeRemaining(hours) {
+    if (hours === null) return null;
+    if (hours < 1) return 'under 1h left';
+    if (hours < 48) return '~' + Math.round(hours) + 'h left';
+    return '~' + Math.round(hours / 24) + 'd left';
+  }
+
+  renderVals() {
+    const level = this.props.level ?? 75;
+    const enough = this.props.enoughData ?? true;
+    const threshold = 15;
+    const colour = this.colour(level);
+
+    // The real discharge window off this mouse's record: 80% at 08/26 7:04 PM
+    // down to 75% at 08/27 12:55 AM. Offsets are held so the level tweak
+    // slides the whole curve without changing its shape.
+    const hours = [0, 1.40, 1.57, 2.33, 3.18, 4.80, 5.85];
+    const clock = ['7:04 PM', '8:28 PM', '8:38 PM', '9:24 PM', '10:15 PM', '11:52 PM', '12:55 AM'];
+    const offsets = [5, 5, 4, 3, 2, 1, 0];
+    const values = offsets.map((o) => Math.min(100, level + o));
+
+    const W = 280, TOP = 6, BOT = 86;
+    const span = hours[hours.length - 1];
+    const x = (h) => (h / span) * (W - 2) + 1;
+    const y = (p) => TOP + (1 - p / 100) * (BOT - TOP);
+
+    const pts = values.map((v, i) => [x(hours[i]), y(v)]);
+    const line = pts.map((p) => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' ');
+    const area = 'M ' + pts[0][0].toFixed(1) + ' ' + BOT + ' L '
+      + pts.map((p) => p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' L ')
+      + ' L ' + pts[pts.length - 1][0].toFixed(1) + ' ' + BOT + ' Z';
+
+    // Rate over the window, exactly as drain_rate() computes it.
+    const drop = values[0] - values[values.length - 1];
+    const perHour = drop / span;
+    const rateText = this.describeRate(perHour);
+    const remaining = perHour > 0 ? this.describeRemaining(level / perHour) : null;
+
+    let summaryText, summaryColour;
+    if (!enough) {
+      // history.py refuses below 30 minutes of span or a 2-point drop.
+      summaryText = 'not enough data yet';
+      summaryColour = 'rgba(232,233,237,.38)';
+    } else {
+      summaryText = remaining ? rateText + ' · ' + remaining : rateText;
+      summaryColour = 'rgba(232,233,237,.62)';
+    }
+
+    const hovered = this.state.hover;
+    const step = (W - 2) / (values.length - 1);
+    const hits = values.map((v, i) => ({
+      x: (x(hours[i]) - step / 2).toFixed(1),
+      w: step.toFixed(1),
+      enter: () => this.setState({ hover: i }),
+      leave: () => this.setState({ hover: null }),
+    }));
+
+    const tipX = hovered === null ? 0 : Math.max(0, Math.min(W - 92, pts[hovered][0] - 46));
+
+    const data = [
+      { name: 'Razer Viper V3 Pro',        lvl: 76,   age: '3h',  custom: '#2f333c' },
+      { name: 'Orbitalworks Pathfinder',   lvl: 66,   age: '2d',  custom: '#4a4f5a' },
+      { name: 'ZOWIE U2-DW',               lvl: null, age: '4d',  custom: '#25272e' },
+      { name: 'VAXEE XE-S',                lvl: 95,   age: '9d',  custom: '#e3d15c' },
+      { name: 'Fnatic x LAMZU Maya X',     lvl: 81,   age: '9d',  custom: '#e0663a' },
+      { name: 'Hitscan Hyperlight',        lvl: 77,   age: '11d', custom: '#2f333c' },
+      { name: 'G-Wolves HTS Ultra',        lvl: 95,   age: '11d', custom: null },
+      { name: 'Pulsar TenZ Signature RED', lvl: 54,   age: '12d', custom: '#c0392b' },
+      { name: 'IPI Float 88',              lvl: 97,   age: '12d', custom: null },
+      { name: 'CRDRAKO KO-ONE',            lvl: 66,   age: '15d', custom: null },
+      { name: 'Pulsar X2N Crazylight',     lvl: 68,   age: '16d', custom: '#7f9fe0' },
+      { name: 'LAMZU Maya X 8K',           lvl: 100,  age: '18d', custom: '#e0663a' },
+    ];
+
+    return {
+      level,
+      threshold,
+      summaryText,
+      summaryColour,
+      heroFill: 'height: ' + level + '%; background: ' + colour + ';',
+      dotStyle: 'background: ' + colour + ';',
+      chart: {
+        ok: enough,
+        colour,
+        areaFill: colour + '26',
+        line,
+        area,
+        endX: pts[pts.length - 1][0].toFixed(1),
+        endY: pts[pts.length - 1][1].toFixed(1),
+        alertY: y(threshold).toFixed(1),
+        alertLabelY: (y(threshold) - 3).toFixed(1),
+        startLabel: Math.round(span) + 'h ago',
+        hits,
+        hoverOn: hovered !== null,
+        hoverX: hovered === null ? 0 : pts[hovered][0].toFixed(1),
+        hoverY: hovered === null ? 0 : pts[hovered][1].toFixed(1),
+        tipText: hovered === null ? '' : values[hovered] + '% · ' + clock[hovered],
+        // Above the point when there is room, below it when the level is low
+        // enough that the line has dropped near the alert rule.
+        tipStyle: hovered === null
+          ? 'display: none;'
+          : 'left: ' + tipX.toFixed(0) + 'px; top: '
+            + (pts[hovered][1] > 30 ? pts[hovered][1] - 26 : pts[hovered][1] + 12).toFixed(0) + 'px;',
+      },
+      cards: data.map((c) => ({
+        name: c.name,
+        age: c.age,
+        pct: c.lvl === null ? '—' : c.lvl + '%',
+        colour: this.colour(c.lvl),
+        shell: c.custom
+          ? 'background: ' + c.custom + '; border: 1.5px solid rgba(255,255,255,.18);'
+          : 'background: rgba(255,255,255,.08); border: 1.5px solid rgba(232,233,237,.72);',
+        fill: c.custom || c.lvl === null
+          ? 'height: 0%;'
+          : 'height: ' + c.lvl + '%; background: ' + this.colour(c.lvl) + ';',
+        wheel: c.custom ? 'background: rgba(255,255,255,.4);' : 'background: #e8e9ed;',
+      })),
+    };
+  }
+}
+</script>
+</body>
+</html>

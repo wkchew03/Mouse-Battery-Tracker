@@ -10,6 +10,17 @@ from .base import Driver, Reading, all_drivers, device_key, register  # noqa: F4
 # Imported for their registration side effect. Order matters: the first driver
 # to claim a device key wins, so specific vendor drivers must come before any
 # generic fallback.
-from . import logitech, razer, pulsar, ipi, orbital, compx  # noqa: E402,F401
+from . import (  # noqa: E402,F401
+    logitech,
+    razer,
+    pulsar,
+    ipi,
+    orbital,
+    vaxee,
+    compx,
+    ninjutso,
+    finalmouse,
+    zowie,
+)
 
 __all__ = ["Driver", "Reading", "all_drivers", "device_key", "register"]

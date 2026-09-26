@@ -1,0 +1,22 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 900, "h": 600, "title": "Mouse Battery Tracker", "is_interactive": true }
+  ],
+  "annotations": [
+    {
+      "id": "note-chart",
+      "x": 0,
+      "y": -240,
+      "w": 320,
+      "text": "THE CHART IS YOUR REAL DISCHARGE\n\n80% at 08/26 7:04 PM down to 75% at 12:55 AM — the current discharge window off this mouse's own record. Run through history.py that is 0.855%/h, which it words as 20.5%/day · ~4d left.\n\nHover any point for its exact reading. The dashed line is where the low-battery alert fires, so you can see how far off it is.\n\nY axis is the full 0–100. A 5-point drop really is that gentle; scaling to fit would have drawn it as a cliff."
+    },
+    {
+      "id": "note-tweaks",
+      "x": 960,
+      "y": -240,
+      "w": 300,
+      "text": "TWO LEVERS ABOVE THE FRAME\n\nLevel — drag it down. The number, the mouse fill, the chart and the estimate all follow, and everything turns amber under 50 and red under 20. Worth checking that the chart still reads against the magenta corner down there.\n\nEnough data — off is the state after a recharge, or on a mouse seen twice. history.py refuses to estimate below 30 minutes of span or a 2-point drop, so the line goes and the caption says so."
+    }
+  ],
+  "launch": { "view": "canvas" }
+}

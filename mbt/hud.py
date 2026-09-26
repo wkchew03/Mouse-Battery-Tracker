@@ -1,13 +1,23 @@
-"""Detail window: one card per mouse, opened from the tray.
+"""Detail window: the connected mouse pinned left, everything else a shelf.
 
-Threading: pystray owns the main thread on Windows, so Tk runs on its own
-thread and owns everything it creates. Tk is not thread-safe, so the tray
-thread never touches a widget -- it posts messages onto a queue which the Tk
-thread drains from inside its own event loop via `after()`.
+Threading is unchanged from the widget version: pystray owns the main thread
+on Windows, so Tk runs on its own thread and owns everything it creates. Tk is
+not thread-safe, so the tray thread never touches a widget -- it posts messages
+onto a queue which the Tk thread drains from inside its own event loop.
 
-The window is created once and hidden with `withdraw()` rather than destroyed,
-so reopening is instant and Tk never has to be re-initialised on a thread that
-already ran a mainloop.
+What changed is how the window is *painted*. The design is frosted panels over
+a slowly drifting colour field, and Tk has neither alpha compositing on widgets
+nor a blur. So the window is one Canvas:
+
+- the field is a single oversized image, panned (see prism.py);
+- every panel and card is an RGBA sprite -- a Tk photo image blends against
+  whatever canvas item is beneath it, which is what makes the frosting real
+  rather than a flat colour picked to look like it;
+- all text is `create_text`, which has no opaque background and renders with
+  the system's own font engine, so it stays as sharp as a Label would be.
+
+The scroll bar is gone with the widget tree: the shelf scrolls by wheel and
+the fades top and bottom are what say there is more of it.
 """
 
 from __future__ import annotations
@@ -17,32 +27,57 @@ import threading
 import time
 from pathlib import Path
 
-from . import dpi
-from .cards import render_card, render_ring, status_dot
+from . import autostart, dpi, history, prism
+from .cards import render_discharge_chart, render_fade, render_frost, render_icon
 from .drivers.base import Reading
 from .mouseart import install_image, load_custom, render_mouse
-from .store import Store, format_age
+from .store import (
+    MAX_ALERT_THRESHOLD,
+    MIN_ALERT_THRESHOLD,
+    Store,
+    format_age,
+)
 from .theme import (
-    COLOR_HIGH,
-    HUD_BG,
-    HUD_CARD,
-    HUD_CARD_DIM,
-    HUD_HERO,
-    HUD_MUTED,
-    HUD_TEXT,
-    HUD_TEXT_DIM,
-    HUD_TRACK,
-    dim,
+    PRISM_CARD,
+    PRISM_CARD_EDGE,
+    PRISM_CARD_EDGE_HOVER,
+    PRISM_CARD_HOVER,
+    PRISM_GROUND,
+    PRISM_HAIRLINE,
+    PRISM_PANEL,
+    PRISM_PANEL_EDGE,
+    PRISM_TEXT,
+    PRISM_TEXT_DIM,
+    PRISM_TEXT_FAINT,
+    PRISM_TEXT_SOFT,
     level_color,
     to_hex,
 )
 
-HERO_ART = 96
-GRID_ART = 46
-RING_SIZE = 92
-WINDOW_WIDTH = 540
-MAX_RECENT = 8
-GRID_COLUMNS = 2
+WINDOW_WIDTH = 900
+WINDOW_HEIGHT = 600
+PAD = 16
+
+PANEL_WIDTH = 320
+PANEL_ART = 82
+PANEL_ART_HEIGHT = 128
+CHART_HEIGHT = 92
+
+CARD_HEIGHT = 126
+CARD_ART = 36
+CARD_GAP = 10
+GRID_COLUMNS = 3
+
+FADE_HEIGHT = 56
+TOP_FADE_HEIGHT = 18
+
+# One pan step. Slow enough to read as drift rather than motion, cheap enough
+# that it is a coords() call and nothing else.
+TICK_MS = 70
+
+# How often the tick wakes while the window is hidden, only to notice that it
+# still is.
+IDLE_TICK_MS = 700
 
 
 class Hud:
@@ -63,14 +98,28 @@ class Hud:
         self._queue: queue.Queue = queue.Queue()
         self._thread: threading.Thread | None = None
         self._root = None
-        self._body = None
         self._canvas = None
-        self._scrollbar = None
-        self._window = None
+        self._bg_item = None
+        self._field: prism.Field | None = None
         # Tk garbage-collects images that nothing references, leaving blank
-        # labels, so every PhotoImage in the current view is kept alive here.
-        self._images: list = []
+        # items, so every sprite in the current view is kept alive here.
+        self._sprites: list = []
         self._online: list[tuple[str, str, Reading]] = []
+        self._last_sync = 0.0
+        self._scroll = 0.0
+        self._scroll_limit = 0.0
+        self._hover_card: int | None = None
+        self._chart_hover: int | None = None
+        self._chart_box: tuple[int, int, int, int] | None = None
+        self._chart_points: list[tuple[float, int]] = []
+        self._chart_caption_text = ""
+        # index -> (canvas item, width, height), so a hover repaints one card
+        # instead of the whole window.
+        self._card_items: dict[int, tuple[int, int, int]] = {}
+        self._chart_item: int | None = None
+        self._chart_caption: int | None = None
+        self._chart_geometry: tuple[int, int, str] | None = None
+        self._started = 0.0
         # Filled in on the Tk thread once the display DPI is known.
         self.scale = 1.0
 
@@ -104,52 +153,26 @@ class Hud:
         root = tk.Tk()
         self._root = root
         root.title("Mouse Battery Tracker")
-        root.configure(bg=HUD_BG)
+        root.configure(bg=PRISM_GROUND)
 
         self.scale = dpi.scale()
         # Point-sized fonts render at the correct physical size only if Tk knows
         # how many pixels there are per point.
         root.tk.call("tk", "scaling", dpi.tk_scaling())
 
-        root.geometry(f"{self.px(WINDOW_WIDTH)}x{self.px(560)}")
-        root.minsize(self.px(WINDOW_WIDTH), self.px(260))
+        width, height = self.px(WINDOW_WIDTH), self.px(WINDOW_HEIGHT)
+        root.geometry(f"{width}x{height}")
+        root.minsize(self.px(PANEL_WIDTH + 300), self.px(420))
 
         # Closing the window hides it; the app keeps running in the tray.
         root.protocol("WM_DELETE_WINDOW", self._hide)
         root.bind("<Escape>", lambda _event: self._hide())
 
-        # Scrollable body: a Canvas that scrolls an inner Frame. Tk has no
-        # scrollable container, so the cards live in a Frame embedded in a
-        # Canvas window, and the canvas scrolls that.
-        outer = tk.Frame(root, bg=HUD_BG)
-        outer.pack(fill="both", expand=True, padx=self.px(14), pady=self.px(14))
-
         self._canvas = tk.Canvas(
-            outer, bg=HUD_BG, highlightthickness=0, bd=0, takefocus=0
+            root, highlightthickness=0, bd=0, takefocus=0, bg=PRISM_GROUND
         )
-        self._scrollbar = tk.Scrollbar(
-            outer, orient="vertical", command=self._canvas.yview
-        )
-        self._canvas.configure(yscrollcommand=self._on_scroll_range)
-        self._canvas.pack(side="left", fill="both", expand=True)
-
-        self._body = tk.Frame(self._canvas, bg=HUD_BG)
-        self._window = self._canvas.create_window(
-            (0, 0), window=self._body, anchor="nw"
-        )
-
-        # Keep the inner frame exactly as wide as the canvas, or cards would
-        # size to their content and the layout would jump around.
-        self._canvas.bind(
-            "<Configure>",
-            lambda e: self._canvas.itemconfigure(self._window, width=e.width),
-        )
-        self._body.bind(
-            "<Configure>",
-            lambda _e: self._canvas.configure(
-                scrollregion=self._canvas.bbox("all")
-            ),
-        )
+        self._canvas.pack(fill="both", expand=True)
+        self._canvas.bind("<Configure>", self._on_resize)
 
         self._bind_wheel(root)
 
@@ -160,8 +183,10 @@ class Hud:
         except OSError:
             pass
 
+        self._started = time.time()
         root.withdraw()
         root.after(120, self._drain)
+        root.after(TICK_MS, self._tick)
         root.mainloop()
 
     def _drain(self) -> None:
@@ -173,6 +198,9 @@ class Hud:
                     self._show_now()
                 elif kind == "data":
                     self._online = message[1]
+                    # Stamped here rather than in the tray so "last sync" means
+                    # "when this window last heard", which is what it claims.
+                    self._last_sync = time.time()
                     if self._root is not None and self._root.state() != "withdrawn":
                         self._rebuild()
                 elif kind == "quit":
@@ -185,41 +213,57 @@ class Hud:
         if self._root is not None:
             self._root.after(150, self._drain)
 
+    # ---- the drifting field ---------------------------------------------
+
+    def _tick(self) -> None:
+        """Pan the field one step. Runs only while the window is on screen."""
+        root, canvas = self._root, self._canvas
+        if root is None or canvas is None:
+            return
+        try:
+            visible = root.state() != "withdrawn"
+        except Exception:
+            visible = False
+        if visible and self._field is not None and self._bg_item is not None:
+            x, y = self._field.offset(time.time() - self._started)
+            canvas.coords(self._bg_item, x, y)
+        # The window is withdrawn most of the time. Idling at the animation
+        # rate would keep a timer firing fourteen times a second for a window
+        # nobody is looking at, which is the opposite of what this app claims.
+        root.after(TICK_MS if visible else IDLE_TICK_MS, self._tick)
+
+    def _ensure_field(self, width: int, height: int) -> None:
+        """Render the field, but only when its size actually changed."""
+        from PIL import ImageTk
+
+        if self._field is not None and self._field.matches(width, height):
+            return
+        self._field = prism.Field(width, height)
+        self._field_photo = ImageTk.PhotoImage(self._field.image)
+        if self._bg_item is None:
+            self._bg_item = self._canvas.create_image(
+                0, 0, image=self._field_photo, anchor="nw", tags=("field",)
+            )
+        else:
+            self._canvas.itemconfigure(self._bg_item, image=self._field_photo)
+        self._canvas.tag_lower(self._bg_item)
+
+    def _on_resize(self, _event=None) -> None:
+        if self._root is not None and self._root.state() != "withdrawn":
+            self._rebuild()
+
     # ---- scrolling -------------------------------------------------------
 
-    def _on_scroll_range(self, first: str, last: str) -> None:
-        """Show the scrollbar only when the content actually overflows."""
-        if self._scrollbar is None:
-            return
-        if float(first) <= 0.0 and float(last) >= 1.0:
-            self._scrollbar.pack_forget()
-        else:
-            self._scrollbar.pack(side="right", fill="y")
-        self._scrollbar.set(first, last)
-
     def _bind_wheel(self, root) -> None:
-        """Wheel scrolling anywhere in the window.
-
-        bind_all rather than binding the canvas: the cards sit on top of it, so
-        a wheel event over a card never reaches the canvas otherwise.
-        """
         root.bind_all("<MouseWheel>", self._on_wheel)
         root.bind_all("<Button-4>", self._on_wheel)  # X11
         root.bind_all("<Button-5>", self._on_wheel)
-        root.bind("<Prior>", lambda _e: self._scroll_page(-1))
-        root.bind("<Next>", lambda _e: self._scroll_page(1))
-        root.bind("<Home>", lambda _e: self._canvas.yview_moveto(0.0))
-        root.bind("<End>", lambda _e: self._canvas.yview_moveto(1.0))
-
-    def _scrollable(self) -> bool:
-        if self._canvas is None:
-            return False
-        first, last = self._canvas.yview()
-        return not (first <= 0.0 and last >= 1.0)
+        root.bind("<Prior>", lambda _e: self._scroll_by(-self.px(200)))
+        root.bind("<Next>", lambda _e: self._scroll_by(self.px(200)))
+        root.bind("<Home>", lambda _e: self._scroll_by(-self._scroll))
+        root.bind("<End>", lambda _e: self._scroll_by(self._scroll_limit))
 
     def _on_wheel(self, event) -> None:
-        if not self._scrollable():
-            return
         if getattr(event, "num", None) == 4:
             delta = -1
         elif getattr(event, "num", None) == 5:
@@ -227,11 +271,18 @@ class Hud:
         else:
             # Windows reports multiples of 120.
             delta = -1 if event.delta > 0 else 1
-        self._canvas.yview_scroll(delta * 2, "units")
+        self._scroll_by(delta * self.px(56))
 
-    def _scroll_page(self, direction: int) -> None:
-        if self._scrollable():
-            self._canvas.yview_scroll(direction, "pages")
+    def _scroll_by(self, amount: float) -> None:
+        canvas = self._canvas
+        if canvas is None or self._scroll_limit <= 0:
+            return
+        target = max(0.0, min(self._scroll_limit, self._scroll + amount))
+        moved = target - self._scroll
+        if not moved:
+            return
+        self._scroll = target
+        canvas.move("shelf", 0, -moved)
 
     # ---- window ----------------------------------------------------------
 
@@ -319,9 +370,11 @@ class Hud:
         if root is None:
             return
         # Ask for a fresh reading as the window opens; the result arrives via
-        # update() a moment later and triggers another rebuild.
+        # the queue and triggers another rebuild.
         if self.on_refresh is not None:
             try:
+                self.on_refresh("hud-open")
+            except TypeError:
                 self.on_refresh()
             except Exception:
                 pass
@@ -334,360 +387,399 @@ class Hud:
         root.after(300, lambda: root.attributes("-topmost", False))
         root.focus_force()
 
-    # ---- rendering -------------------------------------------------------
+    # ---- painting --------------------------------------------------------
 
     def _rebuild(self) -> None:
-        tk = self._tk
-        body = self._body
-        if body is None:
+        canvas = self._canvas
+        if canvas is None:
             return
 
-        for child in body.winfo_children():
-            child.destroy()
-        self._images = []
-        if self._canvas is not None:
-            self._canvas.yview_moveto(0.0)
+        # An unmapped canvas reports 1, not 0, so `or` is not enough of a
+        # guard: the first paint would size the panel to a negative height.
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width < self.px(200) or height < self.px(200):
+            width, height = self.px(WINDOW_WIDTH), self.px(WINDOW_HEIGHT)
 
-        online_keys = {key for key, _, _ in self._online}
+        # Only the painted layer is torn down. The field is independent of
+        # layout and survives every repaint -- rebuilding it here would throw
+        # away the pan position and re-render it on every hover.
+        canvas.delete("paint")
+        self._sprites = []
+        self._ensure_field(width, height)
 
-        self._heading(body, "Currently connected")
-        if self._online:
-            for key, label, reading in self._online:
-                self._hero_card(body, key, label, reading)
-        else:
-            self._empty(body, "No mouse detected")
+        pad = self.px(PAD)
+        panel_w = self.px(PANEL_WIDTH)
+        self._paint_panel(pad, pad, panel_w, height - pad * 2)
 
-        recent = [r for r in self.store.recent(exclude=online_keys) if r.last_online]
-        if recent:
-            self._heading(body, "Device history", pad_top=18)
-            self._history_grid(body, recent[:MAX_RECENT])
+        shelf_x = pad + panel_w + pad
+        self._paint_shelf(shelf_x, pad, width - shelf_x - pad, height - pad * 2)
 
-        footer = tk.Frame(body, bg=HUD_BG)
-        footer.pack(fill="x", pady=(self.px(16), 0))
-        tk.Label(
-            footer,
-            text="Esc or close to hide · the app keeps running in the tray",
-            bg=HUD_BG,
-            fg=HUD_MUTED,
-            font=("Segoe UI", 8),
-        ).pack(side="left")
+    def _sprite(self, image):
+        from PIL import ImageTk
 
-        images = tk.Label(
-            footer,
-            text="image folder",
-            bg=HUD_BG,
-            fg=HUD_MUTED,
-            font=("Segoe UI", 8, "underline"),
-            cursor="hand2",
+        photo = ImageTk.PhotoImage(image)
+        self._sprites.append(photo)
+        return photo
+
+    def _text(self, x, y, text, *, fill, size, bold=False, anchor="nw",
+              family="Segoe UI", tags=("paint",)):
+        font = (family, size, "bold") if bold else (family, size)
+        return self._canvas.create_text(
+            x, y, text=text, fill=fill, font=font, anchor=anchor, tags=tags
         )
-        images.pack(side="right")
-        images.bind("<Button-1>", lambda _e: self._open_images_dir())
 
-    def _heading(self, parent, text: str, pad_top: int = 0) -> None:
-        tk = self._tk
-        tk.Label(
-            parent,
-            text=text.upper(),
-            bg=HUD_BG,
-            fg=HUD_MUTED,
-            font=("Segoe UI", 8, "bold"),
-        ).pack(anchor="w", pady=(self.px(pad_top), self.px(6)))
+    # ---- the pinned panel ------------------------------------------------
 
-    def _empty(self, parent, text: str) -> None:
-        tk = self._tk
-        frame = tk.Frame(parent, bg=HUD_CARD_DIM)
-        frame.pack(fill="x", pady=self.px(3))
-        tk.Label(
-            frame, text=text, bg=HUD_CARD_DIM, fg=HUD_MUTED, font=("Segoe UI", 10)
-        ).pack(anchor="w", padx=self.px(14), pady=self.px(14))
+    def _paint_panel(self, x: int, y: int, w: int, h: int) -> None:
+        canvas = self._canvas
+        frost = self._sprite(
+            render_frost(w, h, self.px(18), PRISM_PANEL, PRISM_PANEL_EDGE)
+        )
+        canvas.create_image(x, y, image=frost, anchor="nw", tags=("paint",))
 
-    def _rounded(self, parent, height: int, fill: str) -> tuple:
-        """A frame with a rounded background image behind its children.
+        self._paint_panel_actions(x + w - self.px(22), y + self.px(16))
 
-        Tkinter cannot round a Frame, so the corners come from an image placed
-        behind the content. Children use the same solid fill, so the rounding is
-        only visible where it matters -- at the corners.
-
-        The background is re-rendered whenever the frame is resized. Drawing it
-        once at a size derived from a constant looked correct only at the
-        default window width: any wider and the card stopped short while its
-        contents carried on past the edge.
-        """
-        from PIL import ImageTk
-
-        tk = self._tk
-        holder = tk.Frame(parent, bg=HUD_BG, height=height)
-        backdrop = tk.Label(holder, bg=HUD_BG, bd=0)
-        backdrop.place(x=0, y=0, relwidth=1, relheight=1)
-
-        last = {"size": None}
-
-        def redraw(_event=None):
-            width = holder.winfo_width()
-            actual = holder.winfo_height()
-            if width <= 1 or actual <= 1:
-                return
-            # Quantise so dragging the window does not render a new bitmap for
-            # every single pixel of width.
-            width = max(8, (width // 4) * 4)
-            if last["size"] == (width, actual):
-                return
-            last["size"] = (width, actual)
-            photo = ImageTk.PhotoImage(
-                render_card(width, actual, radius=self.px(14), fill=fill)
+        if not self._online:
+            self._text(
+                x + w // 2, y + h // 2, "No mouse detected",
+                fill=PRISM_TEXT_FAINT, size=10, anchor="center",
             )
-            backdrop.configure(image=photo)
-            # Held on the widget so it survives GC without growing the shared
-            # image list every time the window is resized.
-            backdrop.image = photo
+            return
 
-        holder.bind("<Configure>", redraw)
-        return holder, backdrop
-
-    def _hero_card(self, parent, key: str, label: str, reading: Reading) -> None:
-        """Large card for the connected mouse: artwork, status, ring gauge."""
-        from PIL import ImageTk
-
-        tk = self._tk
+        key, label, reading = self._online[0]
         name = self.store.display_name(key, label)
+        record = self.store.records.get(key)
 
         percent = reading.percent
-        stale_note = ""
-        if percent is None:
-            # Charging often reports no level; fall back to the stored one and
-            # say so rather than showing an empty ring.
-            record = self.store.records.get(key)
-            if record is not None and record.percent is not None:
-                percent = record.percent
-                stale_note = f"last known {record.percent}%"
+        if percent is None and record is not None:
+            percent = record.percent
+        colour = to_hex(level_color(percent, bool(reading.charging)))
 
-        card, _ = self._rounded(parent, self.px(126), HUD_HERO)
-        card.pack(fill="x", pady=self.px(4))
-        card.pack_propagate(False)
-
-        # Artwork
-        art = load_custom(
-            self.images_dir, key, self.px(HERO_ART), name
-        ) or render_mouse(
-            size=self.px(HERO_ART),
-            percent=percent,
-            charging=bool(reading.charging),
-            online=True,
+        art_size = self.px(PANEL_ART)
+        art = load_custom(self.images_dir, key, art_size, name) or render_mouse(
+            size=art_size, percent=percent, charging=bool(reading.charging), online=True
         )
-        art_photo = ImageTk.PhotoImage(art)
-        self._images.append(art_photo)
-        art_label = tk.Label(card, image=art_photo, bg=HUD_HERO, cursor="hand2", bd=0)
-        art_label.pack(side="left", padx=(self.px(16), self.px(14)), pady=self.px(14))
-        art_label.bind(
-            "<Button-1>", lambda _e, k=key, n=name: self._choose_image(k, n)
+        art_photo = self._sprite(art)
+        art_item = canvas.create_image(
+            x + w // 2, y + self.px(30), image=art_photo, anchor="n", tags=("paint",)
         )
+        canvas.tag_bind(art_item, "<Button-1>",
+                        lambda _e, k=key, n=name: self._choose_image(k, n))
+        canvas.itemconfigure(art_item, state="normal")
 
-        # Ring gauge on the right
-        ring = ImageTk.PhotoImage(
-            render_ring(
-                self.px(RING_SIZE),
-                percent,
-                charging=bool(reading.charging),
-                online=True,
-            )
-        )
-        self._images.append(ring)
-        tk.Label(card, image=ring, bg=HUD_HERO, bd=0).pack(
-            side="right", padx=(self.px(10), self.px(18))
-        )
+        top = y + self.px(30) + self.px(PANEL_ART_HEIGHT)
 
-        # Text column
-        text = tk.Frame(card, bg=HUD_HERO)
-        text.pack(side="left", fill="both", expand=True, pady=self.px(16))
+        # The number and its sign are separate items so they can be sized apart.
+        shown = "--" if percent is None else str(percent)
+        number = self._text(x + w // 2, top + self.px(14), shown,
+                            fill=PRISM_TEXT, size=40, anchor="n",
+                            family="Segoe UI Light")
+        bounds = canvas.bbox(number)
+        if bounds and percent is not None:
+            self._text(bounds[2] + self.px(2), bounds[3] - self.px(14), "%",
+                       fill=PRISM_TEXT_DIM, size=17, anchor="sw",
+                       family="Segoe UI Light")
 
-        name_row = tk.Frame(text, bg=HUD_HERO)
-        name_row.pack(fill="x")
-        tk.Label(
-            name_row,
-            text=name,
-            bg=HUD_HERO,
-            fg=HUD_TEXT,
-            font=("Segoe UI", 13, "bold"),
-            anchor="w",
-        ).pack(side="left")
-        rename = tk.Label(
-            name_row,
-            text="rename",
-            bg=HUD_HERO,
-            fg=HUD_MUTED,
-            font=("Segoe UI", 8, "underline"),
-            cursor="hand2",
-        )
-        rename.pack(side="left", padx=(self.px(8), 0))
-        rename.bind("<Button-1>", lambda _e, k=key, n=name: self._rename(k, n))
+        name_y = top + self.px(74)
+        name_item = self._text(x + w // 2, name_y, name, fill=PRISM_TEXT_SOFT,
+                               size=9, anchor="n")
+        canvas.tag_bind(name_item, "<Button-1>",
+                        lambda _e, k=key, n=name: self._rename(k, n))
 
-        # Status line with a live dot
-        status = tk.Frame(text, bg=HUD_HERO)
-        status.pack(fill="x", pady=(self.px(6), 0))
-        dot = ImageTk.PhotoImage(status_dot(self.px(8), COLOR_HIGH))
-        self._images.append(dot)
-        tk.Label(status, image=dot, bg=HUD_HERO, bd=0).pack(side="left")
-
-        bits = ["Active"]
+        bits = ["connected now" if reading.online else "off"]
         if reading.connection:
             bits.append(reading.connection)
         if reading.charging:
             bits.append("charging")
-        tk.Label(
-            status,
-            text="  " + " · ".join(bits),
-            bg=HUD_HERO,
-            fg=HUD_MUTED,
-            font=("Segoe UI", 9),
-        ).pack(side="left")
-
-        remaining = (
-            f"{percent}% remaining" if percent is not None else reading.describe()
-        )
-        tk.Label(
-            text,
-            text=remaining,
-            bg=HUD_HERO,
-            fg=to_hex(level_color(percent, bool(reading.charging))),
-            font=("Segoe UI", 10),
-            anchor="w",
-        ).pack(fill="x", pady=(self.px(4), 0))
-
-        if stale_note:
-            tk.Label(
-                text,
-                text=stale_note,
-                bg=HUD_HERO,
-                fg=HUD_MUTED,
-                font=("Segoe UI", 8),
-                anchor="w",
-            ).pack(fill="x")
-
-    def _history_grid(self, parent, records) -> None:
-        """Two-column grid of previously seen mice."""
-        tk = self._tk
-        grid = tk.Frame(parent, bg=HUD_BG)
-        grid.pack(fill="x")
-        for column in range(GRID_COLUMNS):
-            grid.grid_columnconfigure(column, weight=1, uniform="cards")
-
-        now = time.time()
-        gap = self.px(4)
-        # Tall enough for a two-line name; the card fills its grid cell
-        # horizontally, so no width is fixed here.
-        height = self.px(104)
-
-        for index, record in enumerate(records):
-            holder, _ = self._rounded(grid, height, HUD_CARD)
-            holder.grid(
-                row=index // GRID_COLUMNS,
-                column=index % GRID_COLUMNS,
-                padx=gap,
-                pady=gap,
-                sticky="ew",
+        dot = self.px(3)
+        centre = x + w // 2
+        status = " · ".join(bits)
+        status_y = name_y + self.px(22)
+        text_item = self._text(centre + dot, status_y, status,
+                               fill=PRISM_TEXT_DIM, size=8, anchor="n")
+        bounds = canvas.bbox(text_item)
+        if bounds:
+            canvas.coords(text_item, centre + dot * 3, status_y)
+            bounds = canvas.bbox(text_item)
+            cy = (bounds[1] + bounds[3]) / 2
+            canvas.create_oval(
+                bounds[0] - dot * 4, cy - dot, bounds[0] - dot * 2, cy + dot,
+                fill=colour, outline="", tags=("paint",),
             )
-            holder.grid_propagate(False)
-            self._history_card(holder, record, now)
 
-    def _history_card(self, card, record, now: float) -> None:
-        from PIL import ImageTk
+        self._paint_chart(x, y, w, h, key, percent, colour, record)
 
-        tk = self._tk
+    def _paint_panel_actions(self, x: int, y: int) -> None:
+        """A gear and a folder, in the panel's top corner.
+
+        The approved design has no settings block -- so the controls that used
+        to live in one move behind these rather than disappearing with it.
+        """
+        canvas = self._canvas
+        size = self.px(15)
+        for offset, name, action in (
+            (0, "gear", self._open_settings),
+            (size + self.px(8), "folder", self._open_images_dir),
+        ):
+            photo = self._sprite(render_icon(name, size, PRISM_TEXT_FAINT))
+            item = canvas.create_image(x - offset, y, image=photo, anchor="ne",
+                                       tags=("paint",))
+            canvas.tag_bind(item, "<Button-1>", lambda _e, run=action: run())
+
+    def _paint_chart(self, x, y, w, h, key, percent, colour, record) -> None:
+        """The current discharge, with whatever estimate the data supports."""
+        samples = record.history if record is not None else []
+        points = history.discharge_series(samples)
+        caption = history.summary(samples, percent) or "not enough data yet"
+        self._chart_caption_text = caption
+
+        chart_w = w - self.px(40)
+        chart_h = self.px(CHART_HEIGHT)
+        chart_x = x + self.px(20)
+        chart_y = y + h - self.px(18) - chart_h - self.px(16)
+
+        self._chart_points = points
+        self._chart_box = (chart_x, chart_y, chart_w, chart_h)
+
+        image = render_discharge_chart(
+            chart_w, chart_h, points, colour,
+            threshold=self.store.alert_threshold,
+            hover=self._chart_hover,
+        )
+        photo = self._sprite(image)
+        item = self._canvas.create_image(chart_x, chart_y, image=photo,
+                                         anchor="nw", tags=("paint",))
+        if points:
+            self._canvas.tag_bind(item, "<Motion>", self._on_chart_motion)
+            self._canvas.tag_bind(item, "<Leave>", self._on_chart_leave)
+
+        self._chart_item = item
+        self._chart_geometry = (chart_w, chart_h, colour)
+        self._chart_caption = self._text(
+            chart_x + chart_w // 2, chart_y + chart_h + self.px(4),
+            self._chart_detail(caption), fill=PRISM_TEXT_DIM, size=8, anchor="n",
+        )
+
+    def _chart_detail(self, caption: str) -> str:
+        """The caption, or the point under the cursor while there is one."""
+        points = self._chart_points
+        at = self._chart_hover
+        if at is None or at >= len(points):
+            return caption
+        seconds, percent = points[at]
+        ago = points[-1][0] - seconds
+        return f"{percent}% · {format_age(ago)}" if ago else f"{percent}% · now"
+
+    def _repaint_chart(self) -> None:
+        if self._chart_item is None or self._chart_geometry is None:
+            return
+        chart_w, chart_h, colour = self._chart_geometry
+        photo = self._sprite(render_discharge_chart(
+            chart_w, chart_h, self._chart_points, colour,
+            threshold=self.store.alert_threshold, hover=self._chart_hover,
+        ))
+        self._canvas.itemconfigure(self._chart_item, image=photo)
+        if self._chart_caption is not None:
+            self._canvas.itemconfigure(
+                self._chart_caption, text=self._chart_detail(self._chart_caption_text)
+            )
+
+    def _on_chart_motion(self, event) -> None:
+        if not self._chart_points or self._chart_box is None:
+            return
+        chart_x, _, chart_w, _ = self._chart_box
+        span = self._chart_points[-1][0] - self._chart_points[0][0] or 1.0
+        fraction = max(0.0, min(1.0, (event.x - chart_x) / max(1, chart_w)))
+        target = self._chart_points[0][0] + fraction * span
+        nearest = min(
+            range(len(self._chart_points)),
+            key=lambda i: abs(self._chart_points[i][0] - target),
+        )
+        if nearest != self._chart_hover:
+            self._chart_hover = nearest
+            self._repaint_chart()
+
+    def _on_chart_leave(self, _event) -> None:
+        if self._chart_hover is not None:
+            self._chart_hover = None
+            self._repaint_chart()
+
+    # ---- the shelf -------------------------------------------------------
+
+    def _paint_shelf(self, x: int, y: int, w: int, h: int) -> None:
+        canvas = self._canvas
+        online_keys = {key for key, _, _ in self._online}
+        records = [r for r in self.store.recent(exclude=online_keys) if r.last_online]
+
+        gap = self.px(CARD_GAP)
+        card_w = (w - gap * (GRID_COLUMNS - 1)) // GRID_COLUMNS
+        card_h = self.px(CARD_HEIGHT)
+        now = time.time()
+
+        self._card_items = {}
+        for index, record in enumerate(records):
+            column = index % GRID_COLUMNS
+            row = index // GRID_COLUMNS
+            cx = x + column * (card_w + gap)
+            cy = y + row * (card_h + gap) - self._scroll
+            self._paint_card(index, record, cx, cy, card_w, card_h, now)
+
+        rows = (len(records) + GRID_COLUMNS - 1) // GRID_COLUMNS
+        content = rows * card_h + max(0, rows - 1) * gap
+        self._scroll_limit = max(0.0, content - h)
+
+        # Drawn last so they sit over the cards, and only when there is
+        # something for them to be hiding.
+        if self._scroll_limit > 0:
+            fade = self._sprite(
+                render_fade(w, self.px(FADE_HEIGHT), PRISM_GROUND)
+            )
+            canvas.create_image(x, y + h - self.px(FADE_HEIGHT), image=fade,
+                                anchor="nw", tags=("paint",))
+        if self._scroll > 0:
+            top_fade = self._sprite(
+                render_fade(w, self.px(TOP_FADE_HEIGHT), PRISM_GROUND, reverse=True)
+            )
+            canvas.create_image(x, y, image=top_fade, anchor="nw", tags=("paint",))
+
+    def _paint_card(self, index, record, x, y, w, h, now) -> None:
+        canvas = self._canvas
         name = self.store.display_name(record.key, record.label)
+        hovered = self._hover_card == index
 
-        top = tk.Frame(card, bg=HUD_CARD)
-        top.pack(fill="x", padx=self.px(12), pady=(self.px(11), 0))
+        frost = self._sprite(render_frost(
+            w, h, self.px(16),
+            PRISM_CARD_HOVER if hovered else PRISM_CARD,
+            PRISM_CARD_EDGE_HOVER if hovered else PRISM_CARD_EDGE,
+        ))
+        tags = ("paint", "shelf", f"card{index}")
+        card_item = canvas.create_image(x, y, image=frost, anchor="nw", tags=tags)
+        canvas.tag_bind(card_item, "<Enter>",
+                        lambda _e, i=index: self._hover(i))
+        canvas.tag_bind(card_item, "<Leave>", lambda _e: self._hover(None))
 
-        art = load_custom(
-            self.images_dir, record.key, self.px(GRID_ART), name
-        ) or render_mouse(
-            size=self.px(GRID_ART), percent=record.percent, online=False
+        art_size = self.px(CARD_ART)
+        art = load_custom(self.images_dir, record.key, art_size, name) or render_mouse(
+            size=art_size, percent=record.percent, online=False
         )
-        photo = ImageTk.PhotoImage(art)
-        self._images.append(photo)
-        art_label = tk.Label(top, image=photo, bg=HUD_CARD, cursor="hand2", bd=0)
-        art_label.pack(side="left", padx=(0, self.px(9)))
-        art_label.bind(
-            "<Button-1>",
-            lambda _e, k=record.key, n=name: self._choose_image(k, n),
+        art_photo = self._sprite(art)
+        art_item = canvas.create_image(x + w // 2, y + self.px(14), image=art_photo,
+                                       anchor="n", tags=tags)
+        canvas.tag_bind(art_item, "<Button-1>",
+                        lambda _e, k=record.key, n=name: self._choose_image(k, n))
+
+        name_item = canvas.create_text(
+            x + w // 2, y + self.px(70), text=name, fill=PRISM_TEXT_SOFT,
+            font=("Segoe UI", 8), anchor="n", width=w - self.px(14), tags=tags,
         )
+        canvas.tag_bind(name_item, "<Button-1>",
+                        lambda _e, k=record.key, n=name: self._rename(k, n))
 
-        right = tk.Frame(top, bg=HUD_CARD)
-        right.pack(side="left", fill="both", expand=True)
+        level = record.describe_last_known()
+        numeric = record.percent is not None
+        colour = to_hex(level_color(record.percent))
+        age = format_age(now - record.last_online).replace(" ago", "")
 
-        label = tk.Label(
-            right,
-            text=name,
-            bg=HUD_CARD,
-            fg=HUD_TEXT_DIM,
-            font=("Segoe UI", 9, "bold"),
-            anchor="w",
-            justify="left",
-            wraplength=self.px(150),
+        level_item = canvas.create_text(
+            x + w // 2, y + self.px(94), text=level, fill=colour,
+            font=("Segoe UI", 10 if numeric else 8, "bold"), anchor="n", tags=tags,
         )
-        label.pack(fill="x")
-        label.bind("<Button-1>", lambda _e, k=record.key, n=name: self._rename(k, n))
-        label.configure(cursor="hand2")
+        bounds = canvas.bbox(level_item)
+        if bounds:
+            width_of = bounds[2] - bounds[0]
+            gap = self.px(5)
+            age_item = canvas.create_text(
+                0, 0, text=age, fill=PRISM_TEXT_FAINT,
+                font=("Segoe UI", 8), anchor="nw", tags=tags,
+            )
+            age_bounds = canvas.bbox(age_item)
+            age_width = age_bounds[2] - age_bounds[0] if age_bounds else 0
+            total = width_of + gap + age_width
+            left = x + w // 2 - total // 2
+            canvas.coords(level_item, left, y + self.px(94))
+            canvas.itemconfigure(level_item, anchor="nw")
+            canvas.coords(age_item, left + width_of + gap, y + self.px(96))
 
-        # Wrap to the space actually available rather than a fixed width, so a
-        # wider window gives long names more room instead of wrapping early.
-        def rewrap(_event=None, widget=right, target=label):
-            available = widget.winfo_width()
-            if available > 1:
-                target.configure(wraplength=max(self.px(80), available - self.px(6)))
+        self._card_items[index] = (card_item, w, h)
 
-        right.bind("<Configure>", rewrap)
+    def _hover(self, index: int | None) -> None:
+        """Repaint just the cards whose state changed.
 
-        # Dimmed: these readings are not live, and at full brightness they were
-        # indistinguishable from the connected mouse's.
-        stale_colour = to_hex(dim(level_color(record.percent)))
+        Rebuilding the window would re-render every sprite in it -- eleven
+        cards, the panel and the chart -- for a mouse moving across a grid,
+        which is exactly the work a hover cannot afford.
+        """
+        if index == self._hover_card:
+            return
+        previous, self._hover_card = self._hover_card, index
+        for at, hovered in ((previous, False), (index, True)):
+            entry = self._card_items.get(at) if at is not None else None
+            if entry is None:
+                continue
+            item, w, h = entry
+            photo = self._sprite(render_frost(
+                w, h, self.px(16),
+                PRISM_CARD_HOVER if hovered else PRISM_CARD,
+                PRISM_CARD_EDGE_HOVER if hovered else PRISM_CARD_EDGE,
+            ))
+            self._canvas.itemconfigure(item, image=photo)
 
-        tk.Label(
-            right,
-            text=record.describe_last_known(),
-            bg=HUD_CARD,
-            fg=stale_colour,
-            font=("Segoe UI", 9),
-            anchor="w",
-        ).pack(fill="x")
+    # ---- settings --------------------------------------------------------
 
-        bar_row = tk.Frame(card, bg=HUD_CARD)
-        bar_row.pack(fill="x", padx=self.px(12), pady=(self.px(6), 0))
-        self._bar(bar_row, record.percent, stale_colour, HUD_CARD)
-
-        tk.Label(
-            card,
-            text=f"Last active: {format_age(now - record.last_online)}",
-            bg=HUD_CARD,
-            fg=HUD_MUTED,
-            font=("Segoe UI", 8),
-            anchor="w",
-        ).pack(fill="x", padx=self.px(12), pady=(self.px(5), self.px(10)))
-
-
-    def _bar(self, parent, percent: int | None, accent: str, background: str) -> None:
-        """Battery bar drawn on a Canvas -- ttk.Progressbar can't be recoloured
-        reliably across Windows themes."""
+    def _open_settings(self) -> None:
+        """The alert threshold and the two switches, in their own window."""
         tk = self._tk
-        height = self.px(7)
-        bar = tk.Canvas(
-            parent,
-            height=height,
-            bg=background,
-            highlightthickness=0,
-            bd=0,
-        )
-        bar.pack(fill="x")
+        top = tk.Toplevel(self._root)
+        top.title("Settings")
+        top.configure(bg=PRISM_GROUND)
+        top.resizable(False, False)
+        top.transient(self._root)
 
-        def draw(_event=None) -> None:
-            bar.delete("all")
-            width = bar.winfo_width()
-            if width <= 1:
-                return
-            bar.create_rectangle(0, 0, width, height, fill=HUD_TRACK, outline="")
-            if percent is not None:
-                filled = width * max(0, min(100, percent)) / 100
-                if filled > 0:
-                    bar.create_rectangle(0, 0, filled, height, fill=accent, outline="")
+        body = tk.Frame(top, bg=PRISM_GROUND)
+        body.pack(padx=self.px(18), pady=self.px(16))
 
-        bar.bind("<Configure>", draw)
+        row = tk.Frame(body, bg=PRISM_GROUND)
+        row.pack(fill="x", pady=(0, self.px(10)))
+        tk.Label(row, text="Alert below", bg=PRISM_GROUND, fg=PRISM_TEXT_SOFT,
+                 font=("Segoe UI", 9)).pack(side="left")
+        threshold = tk.IntVar(value=self.store.alert_threshold)
+        tk.Label(row, text="%", bg=PRISM_GROUND, fg=PRISM_TEXT_DIM,
+                 font=("Segoe UI", 9)).pack(side="right", padx=(self.px(3), 0))
+        tk.Spinbox(
+            row, from_=MIN_ALERT_THRESHOLD, to=MAX_ALERT_THRESHOLD, increment=5,
+            width=3, textvariable=threshold, state="readonly", justify="right",
+            font=("Segoe UI", 9), bg=PRISM_HAIRLINE, fg=PRISM_TEXT,
+            readonlybackground=PRISM_HAIRLINE, buttonbackground=PRISM_HAIRLINE,
+            bd=0, highlightthickness=0,
+            command=lambda: self.store.set_alert_threshold(threshold.get()),
+        ).pack(side="right")
+
+        notify = tk.BooleanVar(value=self.store.notify_low)
+        startup = tk.BooleanVar(value=autostart.is_enabled())
+
+        def check(text, variable, command):
+            tk.Checkbutton(
+                body, text=text, variable=variable, command=command,
+                bg=PRISM_GROUND, fg=PRISM_TEXT_SOFT, activebackground=PRISM_GROUND,
+                activeforeground=PRISM_TEXT, selectcolor=PRISM_HAIRLINE,
+                font=("Segoe UI", 9), anchor="w", bd=0, highlightthickness=0,
+                cursor="hand2",
+            ).pack(fill="x", pady=(0, self.px(4)))
+
+        check("Low battery notifications", notify,
+              lambda: self.store.set_notify_low(notify.get()))
+
+        def toggle_startup():
+            try:
+                autostart.toggle()
+            except Exception:
+                pass
+            # Read the registry back: writing the Run key can fail, and a tick
+            # left on after a failed write lies about the next login.
+            startup.set(autostart.is_enabled())
+
+        check("Start with Windows", startup, toggle_startup)
+
+        top.bind("<Escape>", lambda _e: top.destroy())
+        top.protocol("WM_DELETE_WINDOW", lambda: (top.destroy(), self._rebuild()))

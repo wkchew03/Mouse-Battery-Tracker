@@ -6,16 +6,18 @@ callable hands back, so a wedged device can never freeze the UI.
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Callable, Iterable
 
 import pystray
-from PIL import Image, ImageDraw, ImageFont  # noqa: F401  (Image used for LANCZOS)
+from PIL import Image, ImageDraw  # noqa: F401  (Image used for LANCZOS)
 
 from . import autostart, feed
+from .cards import load_font
 from .drivers.base import Reading
-from .store import Store, format_age
+from .store import ALERT_CLEAR_MARGIN, DEFAULT_SETTINGS, Store, format_age
 from .theme import (  # noqa: F401  (re-exported for callers and tests)
     COLOR_CHARGING,
     COLOR_HIGH,
@@ -27,23 +29,44 @@ from .theme import (  # noqa: F401  (re-exported for callers and tests)
 
 ICON_SIZE = 64
 
+# Diagnostic log. pystray swallows exceptions raised inside menu callbacks and
+# the app runs under pythonw with no console, so without a file there is no way
+# to see whether a menu click did anything at all.
+_LOG_PATH = None
+_LOG_LIMIT = 128 * 1024
+
+
+def debug_log(message: str) -> None:
+    global _LOG_PATH
+    # Tests construct TrayApp against a temp store, but this path is absolute,
+    # so without this they scribble their fake failures into the real log.
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return
+    try:
+        if _LOG_PATH is None:
+            from .store import app_dir
+
+            _LOG_PATH = app_dir() / "tray.log"
+            _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        if _LOG_PATH.exists() and _LOG_PATH.stat().st_size > _LOG_LIMIT:
+            _LOG_PATH.unlink()
+        stamp = time.strftime("%H:%M:%S")
+        with _LOG_PATH.open("a", encoding="utf-8") as handle:
+            handle.write(f"{stamp} {message}\n")
+    except Exception:
+        pass
+
 # Warn once per discharge cycle, not every poll. The mouse must climb back above
-# LOW_BATTERY_CLEAR before it can warn again, so a level hovering on the
+# the clear level before it can warn again, so a level hovering on the
 # threshold doesn't produce a notification every minute.
-LOW_BATTERY_THRESHOLD = 15
-LOW_BATTERY_CLEAR = 25
+#
+# These are only the defaults now -- the live values come from the store, which
+# the HUD writes to. Kept as names because they are what "off the shelf" means.
+LOW_BATTERY_THRESHOLD = DEFAULT_SETTINGS["alert_threshold"]
+LOW_BATTERY_CLEAR = LOW_BATTERY_THRESHOLD + ALERT_CLEAR_MARGIN
 
 # (key, label, Reading) for every device the app currently knows how to reach.
 Provider = Callable[[], Iterable[tuple[str, str, Reading]]]
-
-
-def _font(size: int) -> ImageFont.ImageFont:
-    for name in ("segoeuib.ttf", "seguisb.ttf", "arialbd.ttf", "DejaVuSans-Bold.ttf"):
-        try:
-            return ImageFont.truetype(name, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
 
 
 def render_icon(percent: int | None, charging: bool = False) -> Image.Image:
@@ -64,7 +87,7 @@ def render_icon(percent: int | None, charging: bool = False) -> Image.Image:
     )
 
     text = "--" if percent is None else str(percent)
-    font = _font((40 if len(text) <= 2 else 28) * scale)
+    font = load_font((40 if len(text) <= 2 else 28) * scale)
     left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
     position = (
         (size - (right - left)) / 2 - left,
@@ -157,14 +180,23 @@ class TrayApp:
         Charging clears the warning immediately -- a mouse on the cable is no
         longer a problem even if it is still reading low.
         """
+        if not self.store.notify_low:
+            # Forget who has been warned, so re-enabling notifications warns
+            # about a mouse that dropped low while they were off.
+            self._warned.clear()
+            return
+
+        threshold = self.store.alert_threshold
+        clear = self.store.alert_clear
+
         for key, label, reading in online:
             percent = reading.percent
             if percent is None:
                 continue
-            if reading.charging or percent >= LOW_BATTERY_CLEAR:
+            if reading.charging or percent >= clear:
                 self._warned.discard(key)
                 continue
-            if percent <= LOW_BATTERY_THRESHOLD and key not in self._warned:
+            if percent <= threshold and key not in self._warned:
                 self._warned.add(key)
                 name = self.store.display_name(key, label)
                 try:
@@ -208,16 +240,30 @@ class TrayApp:
     # ---- polling --------------------------------------------------------
 
     def poll_once(self) -> None:
+        started = time.time()
         try:
             results = list(self.provider())
-        except Exception:
+        except Exception as exc:
+            debug_log(f"poll failed: {exc}")
             results = []
+        live = [label for _, label, reading in results if reading.online]
+        debug_log(
+            f"poll took {time.time() - started:.2f}s; "
+            f"{len(results)} device(s); online={live}"
+        )
 
         online = []
         for key, label, reading in results:
             self.store.update(key, label, reading)
             if reading.online:
                 online.append((key, label, reading))
+
+        # Some identities are only knowable after a live read (Logitech's unit
+        # id), so a mouse can still be sitting under its old key the first
+        # time this runs at startup. Cheap when there is nothing to merge --
+        # merge_aliases only touches disk when it actually folds something --
+        # so it is safe to check again after every poll rather than once.
+        self._merge_legacy_aliases()
 
         with self._lock:
             self._online = online
@@ -246,22 +292,39 @@ class TrayApp:
 
     # ---- actions --------------------------------------------------------
 
-    def request_refresh(self) -> None:
+    def request_refresh(self, source: str = "?") -> None:
         """Poll now, ignoring backoff. Safe to call from any thread."""
         poller = getattr(self, "poller", None)
+        debug_log(f"request_refresh from {source}; poller={poller is not None}")
         if poller is not None:
             try:
                 poller.reset_backoff()
-            except Exception:
-                pass
+            except Exception as exc:
+                debug_log(f"  reset_backoff failed: {exc}")
+
+        # A poll is not instant, so say something immediately. Without this a
+        # click on "Refresh now" looks like it did nothing at all.
+        try:
+            self.icon.title = "Mouse Battery Tracker — refreshing…"
+        except Exception:
+            pass
+
         self._wake.set()
 
     def _on_refresh(self, icon=None, item=None) -> None:
-        self.request_refresh()
+        self.request_refresh("menu")
 
     def _on_show_hud(self, icon=None, item=None) -> None:
         if self.hud is not None:
             self.hud.show()
+
+    def _merge_legacy_aliases(self) -> None:
+        try:
+            from .app import legacy_aliases
+
+            self.store.merge_aliases(legacy_aliases())
+        except Exception:
+            pass
 
     def _on_toggle_autostart(self, icon=None, item=None) -> None:
         autostart.toggle()
@@ -276,12 +339,7 @@ class TrayApp:
 
     def run(self) -> None:
         self.store.load()
-        try:
-            from .app import legacy_aliases
-
-            self.store.merge_aliases(legacy_aliases())
-        except Exception:
-            pass
+        self._merge_legacy_aliases()
         if self.hud is not None:
             self.hud.start()
         thread = threading.Thread(target=self._loop, name="mbt-poll", daemon=True)

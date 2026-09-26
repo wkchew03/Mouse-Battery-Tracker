@@ -17,20 +17,44 @@ COLOR_CHARGING: RGBA = (74, 158, 232, 255)
 # HUD surfaces. Dark by default: this window is opened mid-session, often over a
 # game, and a white panel is jarring in that context.
 HUD_BG = "#1e1f24"
-HUD_CARD = "#2a2c33"
-HUD_CARD_DIM = "#24262c"
 HUD_TEXT = "#e8e9ed"
-# Names of disconnected mice: clearly dimmer than a live name, but still
-# brighter than HUD_MUTED so the name/timestamp hierarchy survives.
-HUD_TEXT_DIM = "#b0b2bc"
 HUD_MUTED = "#9a9ca6"
 HUD_TRACK = "#3a3d46"
-# Slightly lifted surface for the hero card, so the connected mouse reads as
-# the primary element without needing a different hue.
-HUD_HERO = "#31343d"
 
 THRESHOLD_HIGH = 50
 THRESHOLD_LOW = 20
+
+# ---- Prism surfaces -------------------------------------------------------
+# The window is a near-black ground with three slow, heavily blurred colour
+# fields drifting behind frosted panels. Hues were chosen to sit clear of the
+# green/amber/red band the battery levels own, so a level colour never has to
+# compete with the background it is read against.
+PRISM_GROUND = "#0d0d12"
+PRISM_GROUND_RGB: tuple[int, int, int] = (13, 13, 18)
+
+# (colour, centre as a fraction of the field, radius fraction, opacity)
+PRISM_FIELDS = (
+    ((23, 184, 166), (0.20, 0.16), 0.42, 0.50),   # teal
+    ((91, 91, 214), (0.82, 0.22), 0.40, 0.52),    # indigo
+    ((214, 74, 143), (0.22, 0.86), 0.33, 0.34),   # magenta, kept low and corner-bound
+)
+
+# Frosted surfaces, RGBA so they composite over the drifting field. Tk photo
+# images blend against whatever canvas item sits beneath them.
+PRISM_CARD: RGBA = (18, 19, 26, 143)
+PRISM_CARD_HOVER: RGBA = (34, 36, 48, 189)
+PRISM_CARD_EDGE: RGBA = (255, 255, 255, 20)
+PRISM_CARD_EDGE_HOVER: RGBA = (255, 255, 255, 46)
+PRISM_PANEL: RGBA = (16, 17, 24, 128)
+PRISM_PANEL_EDGE: RGBA = (127, 216, 205, 128)
+
+# Canvas text has no alpha, so these are the design's translucent inks already
+# blended against the frosted card they sit on.
+PRISM_TEXT = "#ffffff"
+PRISM_TEXT_SOFT = "#d5d7dc"
+PRISM_TEXT_DIM = "#9a9ba1"
+PRISM_TEXT_FAINT = "#777984"
+PRISM_HAIRLINE = "#2b2d38"
 
 
 def level_color(percent: int | None, charging: bool = False) -> RGBA:
@@ -44,26 +68,6 @@ def level_color(percent: int | None, charging: bool = False) -> RGBA:
     if percent >= THRESHOLD_LOW:
         return COLOR_MID
     return COLOR_LOW
-
-
-# How far to darken a colour for a reading that is no longer live. Chosen to
-# stay clearly readable against HUD_CARD while reading as obviously secondary
-# next to the connected mouse.
-DIM_FACTOR = 0.6
-
-
-def dim(color: RGBA, factor: float = DIM_FACTOR) -> RGBA:
-    """Darkened variant of a level colour, for disconnected mice.
-
-    Keeps the hue so the level still reads at a glance -- a stale 90% is still
-    green, just muted -- rather than flattening everything to grey.
-    """
-    return (
-        int(color[0] * factor),
-        int(color[1] * factor),
-        int(color[2] * factor),
-        color[3] if len(color) > 3 else 255,
-    )
 
 
 def to_hex(color: RGBA) -> str:

@@ -52,8 +52,16 @@ def build_payload(store: Store, online_keys: set[str] | None = None) -> dict:
                 "charging": bool(record.charging),
                 "connected": connected,
                 "last_seen": record.last_online,
+                # A record with no last_online has never answered -- an entry
+                # left by a dongle in firmware-update mode, say. Ageing from
+                # epoch printed "20688d ago"; the HUD and tray hide these
+                # outright, and the feed has no filter, so it says so instead.
                 "last_seen_text": (
-                    "now" if connected else format_age(now - record.last_online)
+                    "now"
+                    if connected
+                    else format_age(now - record.last_online)
+                    if record.last_online
+                    else "never"
                 ),
                 "icon": icon_name(key),
             }

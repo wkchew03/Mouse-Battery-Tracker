@@ -14,7 +14,7 @@ alone will happily open the wrong one and then time out forever.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Protocol, runtime_checkable
+from typing import Iterable, Protocol
 
 # One entry as returned by hid.enumerate(). The keys used across this package
 # are: vendor_id, product_id, interface_number, usage_page, usage, path,
@@ -28,6 +28,9 @@ VENDOR_LOGITECH = 0x046D
 VENDOR_PULSAR = 0x3554
 VENDOR_PIAO = 0x372E
 VENDOR_COMPX = 0x25A7
+# BenQ. Shared with their monitors, so a driver must match more than the vid.
+VENDOR_ZOWIE = 0x04A5
+VENDOR_FINALMOUSE = 0x361D
 
 KNOWN_VENDORS = {
     VENDOR_RAZER: "Razer",
@@ -37,6 +40,11 @@ KNOWN_VENDORS = {
     VENDOR_PIAO: "PIAO / CompX family",
     VENDOR_COMPX: "CompX",
     0x3151: "Lamzu / OEM",
+    VENDOR_ZOWIE: "BenQ ZOWIE",
+    VENDOR_FINALMOUSE: "Finalmouse",
+    # Nordic Semiconductor. Shared by Orbitalworks, Ninjutso and Finalmouse's
+    # Starlight-12, so a driver must match more than the vid.
+    0x1915: "Nordic (Orbitalworks / Ninjutso)",
 }
 
 
@@ -219,7 +227,6 @@ def resolve_label(driver: "Driver", info: DeviceInfo) -> str:
     return describe_device(info)
 
 
-@runtime_checkable
 class Driver(Protocol):
     """Protocol implemented by every per-vendor battery driver.
 

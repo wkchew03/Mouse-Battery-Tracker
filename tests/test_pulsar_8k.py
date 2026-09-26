@@ -161,6 +161,61 @@ def test_identity_is_namespaced():
     assert ":" in identity
 
 
+# --------------------------------------------------------------------------
+# Hitscan shares the receiver platform but not the battery calibration
+# --------------------------------------------------------------------------
+
+# Captured from a Hitscan Hyperlight receiver (3770:0200): 70%, 4176 mV.
+HITSCAN_AT_70 = bytes(
+    [0x08, 0x04, 0x00, 0x00, 0x00, 0x02, 0x46, 0x00, 0x10, 0x50, 0x00, 0x00,
+     0x00, 0x00, 0x00, 0x00, 0xA1]
+)
+
+
+def test_hitscan_matches_its_own_utility():
+    """Hitscan Utility reports 100% at this reading; the level byte says 70%.
+
+    Both vendors on this platform derive the displayed figure from voltage, and
+    in both cases the level byte disagreed with their software -- so the level
+    byte is the unreliable one.
+    """
+    reading = pulsar.parse_power(HITSCAN_AT_70, use_voltage_curve=True)
+    assert reading.percent == 100
+    assert reading.millivolts == 4176
+
+
+def test_the_level_byte_is_what_disagrees():
+    """Keeps the discarded interpretation visible: 70 is what the receiver
+    claims, and it is not what either vendor's software shows."""
+    assert HITSCAN_AT_70[6] == 70
+    assert pulsar.percent_from_voltage(4176) == 100
+
+
+def test_every_vendor_on_this_platform_uses_the_curve():
+    for vendor in (
+        pulsar.VENDOR_HITSCAN,
+        pulsar.VENDOR_PULSAR_8K,
+        pulsar.VENDOR_PULSAR,
+    ):
+        assert vendor in pulsar.VOLTAGE_CURVE_VENDORS
+
+
+def test_identity_prefix_is_per_vendor():
+    """Two brands on one platform must not collide on the same address."""
+    assert pulsar.device_identity("09e699", pulsar.VENDOR_HITSCAN) == "hitscan:09e699"
+    assert pulsar.device_identity("09e699", pulsar.VENDOR_PULSAR_8K) == "pulsar:09e699"
+
+
+def test_existing_pulsar_keys_are_unchanged():
+    """Changing the Pulsar prefix would orphan already-stored entries."""
+    assert pulsar.device_identity("0ce4ab", pulsar.VENDOR_PULSAR_8K) == "pulsar:0ce4ab"
+
+
+def test_hitscan_vendor_is_claimed():
+    info = _info(0xFF02, pid=0x0200, vid=pulsar.VENDOR_HITSCAN)
+    assert pulsar.PulsarDriver().candidates([info])
+
+
 def test_dongle_serial_is_not_used_as_identity():
     """Two different Pulsar dongles were observed reporting the SAME serial
     (522098634735), so the dongle cannot identify the mouse."""

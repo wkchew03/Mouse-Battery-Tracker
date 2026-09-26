@@ -152,11 +152,6 @@ def render_mouse(
     return image.resize((target, target), Image.LANCZOS)
 
 
-def render_unknown(size: int = 96) -> Image.Image:
-    """Placeholder for a device with no reading at all."""
-    return render_mouse(size=size, percent=None, online=False)
-
-
 def install_image(directory: Path, key: str, name: str, source: Path) -> Path | None:
     """Copy a chosen image into place under the name this mouse looks for.
 
@@ -185,13 +180,10 @@ def install_image(directory: Path, key: str, name: str, source: Path) -> Path | 
 
 
 __all__ = [
-    "COLOR_UNKNOWN",
-    "HUD_TRACK",
     "candidate_paths",
     "custom_image_path",
     "install_image",
     "load_custom",
     "render_mouse",
-    "render_unknown",
     "safe_filename",
 ]

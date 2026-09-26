@@ -5,7 +5,7 @@ import time
 
 from mbt import feed
 from mbt.drivers.base import Reading
-from mbt.store import Store
+from mbt.store import DeviceRecord, Store
 
 
 def _store(tmp_path):
@@ -87,3 +87,16 @@ def test_percent_may_be_null_while_charging(tmp_path):
     entry = payload["mice"][0]
     assert entry["percent"] is None
     assert entry["charging"] is True
+
+
+def test_a_record_that_never_answered_says_never(tmp_path):
+    """A dongle seen only in firmware-update mode leaves a record with no
+    last_online. Ageing that from epoch printed "20688d ago" on the Stream
+    Deck; the HUD and tray filter these out, but the feed publishes every
+    record, so it has to word it."""
+    store = Store(tmp_path)
+    store.records["373e:b01e"] = DeviceRecord(key="373e:b01e", label="Maya X DFU")
+
+    entry = feed.build_payload(store)["mice"][0]
+    assert entry["last_seen_text"] == "never"
+    assert entry["percent"] is None

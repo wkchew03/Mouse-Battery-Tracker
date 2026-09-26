@@ -25,6 +25,12 @@ from .. import hidio, hidparse
 from .base import OFFLINE, DeviceInfo, Reading, matches, register
 
 VENDOR_ATTACK_SHARK = 0x373E
+VENDOR_GWOLVES = 0x33E4
+
+# Same firmware platform under different vendor ids: identical collection
+# layout (0xffa0/0xffff inputs plus a 64-byte feature channel) and the same
+# 0xA1-marked replies.
+VENDOR_IDS = frozenset({VENDOR_ATTACK_SHARK, VENDOR_GWOLVES})
 
 REPORT_ID = 0x00
 BUFFER_LEN = 64
@@ -120,7 +126,7 @@ def parse_battery(response: bytes) -> Reading:
 
 class CompxDriver:
     name = "compx-gen2"
-    vendor_ids = frozenset({VENDOR_ATTACK_SHARK})
+    vendor_ids = VENDOR_IDS
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """Pick the collection that carries the command channel.
@@ -132,7 +138,7 @@ class CompxDriver:
         """
         best: dict[tuple, tuple[int, DeviceInfo]] = {}
         for info in infos:
-            if not matches(info, vendor_id=VENDOR_ATTACK_SHARK):
+            if (info.get("vendor_id") or 0) not in VENDOR_IDS:
                 continue
             usage_page = info.get("usage_page") or 0
             if not 0xFF00 <= usage_page <= 0xFFFF:

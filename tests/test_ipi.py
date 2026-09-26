@@ -98,12 +98,6 @@ def test_out_of_range_value_still_counts_as_present():
     assert reading.percent is None
 
 
-def test_max_dpi_cross_check():
-    """26000 matches the Float 88's 26K sensor and validates the offsets."""
-    assert ipi.max_dpi(BASIC_INFO_AT_80) == 26000
-    assert ipi.max_dpi(STUB) is None
-
-
 # --------------------------------------------------------------------------
 # Device selection
 # --------------------------------------------------------------------------

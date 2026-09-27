@@ -5,7 +5,7 @@ and the pan schedule is arithmetic over elapsed seconds.
 """
 
 from mbt import prism
-from mbt.cards import render_discharge_chart, render_fade, render_frost, render_icon
+from mbt.cards import fade_mask, render_discharge_chart, render_frost, render_icon
 from mbt.history import discharge_series
 
 
@@ -80,12 +80,16 @@ def test_frost_keeps_its_alpha():
 
 
 def test_fade_runs_from_clear_to_solid():
-    fade = render_fade(40, 30, "#0d0d12")
-    assert fade.getpixel((20, 0))[3] < 20
-    assert fade.getpixel((20, 29))[3] > 200
+    """Solid past the ramp: a fade that stays translucent shows the cards
+    through it instead of hiding them."""
+    fade = fade_mask(40, 30, ramp=20)
+    assert fade.getpixel((20, 0)) == 0
+    assert 0 < fade.getpixel((20, 10)) < 255
+    assert fade.getpixel((20, 20)) == fade.getpixel((20, 29)) == 255
 
-    upward = render_fade(40, 30, "#0d0d12", reverse=True)
-    assert upward.getpixel((20, 0))[3] > 200
+    upward = fade_mask(40, 30, ramp=20, reverse=True)
+    assert upward.getpixel((20, 29)) == 0
+    assert upward.getpixel((20, 0)) == 255
 
 
 def test_icons_are_drawn_not_glyphs():

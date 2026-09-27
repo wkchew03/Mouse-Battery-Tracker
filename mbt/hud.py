@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 from . import autostart, dpi, history, prism
-from .cards import render_discharge_chart, render_fade, render_frost, render_icon
+from .cards import fade_mask, render_discharge_chart, render_frost, render_icon
 from .drivers.base import Reading
 from .mouseart import install_image, load_custom, render_mouse
 from .store import (
@@ -59,17 +59,17 @@ WINDOW_HEIGHT = 600
 PAD = 16
 
 PANEL_WIDTH = 320
-PANEL_ART = 82
-PANEL_ART_HEIGHT = 128
+PANEL_ART = 120
+PANEL_ART_HEIGHT = 166
 CHART_HEIGHT = 92
 
 CARD_HEIGHT = 126
-CARD_ART = 36
+CARD_ART = 56
 CARD_GAP = 10
 GRID_COLUMNS = 3
 
-FADE_HEIGHT = 56
-TOP_FADE_HEIGHT = 18
+FADE_HEIGHT = 64
+TOP_FADE_HEIGHT = 40
 
 # One pan step. Slow enough to read as drift rather than motion, cheap enough
 # that it is a coords() call and nothing else.
@@ -108,6 +108,11 @@ class Hud:
         self._last_sync = 0.0
         self._scroll = 0.0
         self._scroll_limit = 0.0
+        self._fade_top: int | None = None
+        self._fade_bottom: int | None = None
+        # (item, photo, (x, y, w, h), mask) per fade, repainted as the field pans.
+        self._fades: list = []
+        self._fade_offset: tuple[int, int] | None = None
         self._hover_card: int | None = None
         self._chart_hover: int | None = None
         self._chart_box: tuple[int, int, int, int] | None = None
@@ -227,6 +232,8 @@ class Hud:
         if visible and self._field is not None and self._bg_item is not None:
             x, y = self._field.offset(time.time() - self._started)
             canvas.coords(self._bg_item, x, y)
+            if (x, y) != self._fade_offset:
+                self._paint_fades()
         # The window is withdrawn most of the time. Idling at the animation
         # rate would keep a timer firing fourteen times a second for a window
         # nobody is looking at, which is the opposite of what this app claims.
@@ -283,6 +290,46 @@ class Hud:
             return
         self._scroll = target
         canvas.move("shelf", 0, -moved)
+        self._update_fades()
+
+    def _update_fades(self) -> None:
+        """Each fade says there is more that way, so it goes once there isn't.
+
+        Scrolling only moves the cards, so this has to follow every scroll
+        rather than being decided once at paint time -- that left the bottom
+        fade hiding the last row after scrolling all the way down.
+        """
+        canvas = self._canvas
+        for item, shown in (
+            (self._fade_top, self._scroll > 0),
+            (self._fade_bottom, self._scroll < self._scroll_limit),
+        ):
+            if item is not None:
+                canvas.itemconfigure(item, state="normal" if shown else "hidden")
+        # A fade that was hidden missed the field's drift while it was.
+        self._paint_fades()
+
+    def _paint_fades(self) -> None:
+        """Paint each fade from the colour field under it.
+
+        A fade to a flat colour either stays translucent, which leaves the
+        cards showing through, or goes solid and draws a dark bar across the
+        drifting field. Cut from the field itself, the solid end is the
+        background, so the cards dissolve into it. Only the fades' strips are
+        re-cut (~0.5 ms), and only on ticks where the field actually moved.
+        """
+        canvas, field = self._canvas, self._field
+        if canvas is None or field is None or self._bg_item is None:
+            return
+        ox, oy = (int(v) for v in canvas.coords(self._bg_item))
+        self._fade_offset = (ox, oy)
+        for item, photo, (fx, fy, fw, fh), mask in self._fades:
+            if canvas.itemcget(item, "state") == "hidden":
+                continue
+            strip = field.image.crop((fx - ox, fy - oy, fx - ox + fw, fy - oy + fh))
+            strip = strip.convert("RGBA")
+            strip.putalpha(mask)
+            photo.paste(strip)
 
     # ---- window ----------------------------------------------------------
 
@@ -412,6 +459,9 @@ class Hud:
         # layout and survives every repaint -- rebuilding it here would throw
         # away the pan position and re-render it on every hover.
         canvas.delete("paint")
+        # The item under the pointer may have just been deleted without a
+        # <Leave>, which would leave the hand cursor stuck.
+        canvas.configure(cursor="")
         self._sprites = []
         self._ensure_field(width, height)
 
@@ -435,6 +485,49 @@ class Hud:
         return self._canvas.create_text(
             x, y, text=text, fill=fill, font=font, anchor=anchor, tags=tags
         )
+
+    def _clickable(self, item, action, hint: str) -> None:
+        """Hand cursor and a hint on hover, so a click target says it is one.
+
+        Nothing else in the design marks these: a name that renames on click
+        looks exactly like a label.
+        """
+        canvas = self._canvas
+
+        def enter(event):
+            canvas.configure(cursor="hand2")
+            self._show_tip(event.x, event.y, hint)
+
+        def leave(_event):
+            canvas.configure(cursor="")
+            canvas.delete("tip")
+
+        def click(_event):
+            leave(None)
+            action()
+
+        canvas.tag_bind(item, "<Enter>", enter, add="+")
+        canvas.tag_bind(item, "<Leave>", leave, add="+")
+        canvas.tag_bind(item, "<Button-1>", click)
+
+    def _show_tip(self, x: int, y: int, text: str) -> None:
+        canvas = self._canvas
+        canvas.delete("tip")
+        pad = self.px(5)
+        label = self._text(x + self.px(12), y + self.px(18), text,
+                           fill=PRISM_TEXT_SOFT, size=8, tags=("paint", "tip"))
+        left, top, right, bottom = canvas.bbox(label)
+        # Keep it inside the window: the gear sits against the panel's edge,
+        # and the rightmost cards against the window's.
+        overflow = right + pad - (canvas.winfo_width() - self.px(4))
+        if overflow > 0:
+            canvas.move(label, -overflow, 0)
+            left, right = left - overflow, right - overflow
+        box = canvas.create_rectangle(
+            left - pad, top - pad // 2, right + pad, bottom + pad // 2,
+            fill=PRISM_HAIRLINE, outline=PRISM_TEXT_FAINT, tags=("paint", "tip"),
+        )
+        canvas.tag_raise(label, box)
 
     # ---- the pinned panel ------------------------------------------------
 
@@ -471,9 +564,8 @@ class Hud:
         art_item = canvas.create_image(
             x + w // 2, y + self.px(30), image=art_photo, anchor="n", tags=("paint",)
         )
-        canvas.tag_bind(art_item, "<Button-1>",
-                        lambda _e, k=key, n=name: self._choose_image(k, n))
-        canvas.itemconfigure(art_item, state="normal")
+        self._clickable(art_item, lambda k=key, n=name: self._choose_image(k, n),
+                        "Choose a picture")
 
         top = y + self.px(30) + self.px(PANEL_ART_HEIGHT)
 
@@ -491,8 +583,8 @@ class Hud:
         name_y = top + self.px(74)
         name_item = self._text(x + w // 2, name_y, name, fill=PRISM_TEXT_SOFT,
                                size=9, anchor="n")
-        canvas.tag_bind(name_item, "<Button-1>",
-                        lambda _e, k=key, n=name: self._rename(k, n))
+        self._clickable(name_item, lambda k=key, n=name: self._rename(k, n),
+                        "Rename")
 
         bits = ["connected now" if reading.online else "off"]
         if reading.connection:
@@ -523,16 +615,25 @@ class Hud:
         The approved design has no settings block -- so the controls that used
         to live in one move behind these rather than disappearing with it.
         """
+        from PIL import Image
+
         canvas = self._canvas
-        size = self.px(15)
-        for offset, name, action in (
-            (0, "gear", self._open_settings),
-            (size + self.px(8), "folder", self._open_images_dir),
+        size = self.px(16)
+        # Tk hit-tests an image item by its box, so padding the glyph onto a
+        # larger transparent square is what makes it easy to click.
+        hit = self.px(28)
+        inset = (hit - size) // 2
+        for offset, name, action, hint in (
+            (0, "gear", self._open_settings, "Settings"),
+            (hit, "folder", self._open_images_dir, "Open pictures folder"),
         ):
-            photo = self._sprite(render_icon(name, size, PRISM_TEXT_FAINT))
-            item = canvas.create_image(x - offset, y, image=photo, anchor="ne",
-                                       tags=("paint",))
-            canvas.tag_bind(item, "<Button-1>", lambda _e, run=action: run())
+            padded = Image.new("RGBA", (hit, hit), (0, 0, 0, 0))
+            padded.alpha_composite(render_icon(name, size, PRISM_TEXT_DIM),
+                                   (inset, inset))
+            photo = self._sprite(padded)
+            item = canvas.create_image(x + inset - offset, y - inset, image=photo,
+                                       anchor="ne", tags=("paint",))
+            self._clickable(item, action, hint)
 
     def _paint_chart(self, x, y, w, h, key, percent, colour, record) -> None:
         """The current discharge, with whatever estimate the data supports."""
@@ -636,19 +737,36 @@ class Hud:
         content = rows * card_h + max(0, rows - 1) * gap
         self._scroll_limit = max(0.0, content - h)
 
-        # Drawn last so they sit over the cards, and only when there is
-        # something for them to be hiding.
+        # A resize can shrink the limit below where the shelf was scrolled to.
+        if self._scroll > self._scroll_limit:
+            canvas.move("shelf", 0, self._scroll - self._scroll_limit)
+            self._scroll = self._scroll_limit
+
+        # Drawn last so they sit over the cards. Both exist whenever the shelf
+        # scrolls; _update_fades shows each only while there is more that way.
+        # Each runs on to the window's edge: the cards carry on drawing into
+        # the margin, and a fade that stopped at the shelf left them showing
+        # there at full strength.
+        self._fade_top = self._fade_bottom = None
+        self._fades = []
         if self._scroll_limit > 0:
-            fade = self._sprite(
-                render_fade(w, self.px(FADE_HEIGHT), PRISM_GROUND)
-            )
-            canvas.create_image(x, y + h - self.px(FADE_HEIGHT), image=fade,
-                                anchor="nw", tags=("paint",))
-        if self._scroll > 0:
-            top_fade = self._sprite(
-                render_fade(w, self.px(TOP_FADE_HEIGHT), PRISM_GROUND, reverse=True)
-            )
-            canvas.create_image(x, y, image=top_fade, anchor="nw", tags=("paint",))
+            ramp, top_ramp = self.px(FADE_HEIGHT), self.px(TOP_FADE_HEIGHT)
+            self._fade_bottom = self._add_fade(
+                x, y + h - ramp, w, ramp + y, fade_mask(w, ramp + y, ramp))
+            self._fade_top = self._add_fade(
+                x, 0, w, y + top_ramp,
+                fade_mask(w, y + top_ramp, top_ramp, reverse=True))
+        self._update_fades()
+
+    def _add_fade(self, x: int, y: int, w: int, h: int, mask) -> int:
+        from PIL import ImageTk
+
+        photo = ImageTk.PhotoImage("RGBA", (w, h))
+        self._sprites.append(photo)
+        item = self._canvas.create_image(x, y, image=photo, anchor="nw",
+                                         tags=("paint",))
+        self._fades.append((item, photo, (x, y, w, h), mask))
+        return item
 
     def _paint_card(self, index, record, x, y, w, h, now) -> None:
         canvas = self._canvas
@@ -662,26 +780,29 @@ class Hud:
         ))
         tags = ("paint", "shelf", f"card{index}")
         card_item = canvas.create_image(x, y, image=frost, anchor="nw", tags=tags)
-        canvas.tag_bind(card_item, "<Enter>",
+        # Bound on the card's tag rather than its frost, so moving onto the
+        # picture or the name keeps the card lit instead of un-hovering it.
+        canvas.tag_bind(f"card{index}", "<Enter>",
                         lambda _e, i=index: self._hover(i))
-        canvas.tag_bind(card_item, "<Leave>", lambda _e: self._hover(None))
+        canvas.tag_bind(f"card{index}", "<Leave>", lambda _e: self._hover(None))
 
         art_size = self.px(CARD_ART)
         art = load_custom(self.images_dir, record.key, art_size, name) or render_mouse(
             size=art_size, percent=record.percent, online=False
         )
         art_photo = self._sprite(art)
-        art_item = canvas.create_image(x + w // 2, y + self.px(14), image=art_photo,
+        art_item = canvas.create_image(x + w // 2, y + self.px(10), image=art_photo,
                                        anchor="n", tags=tags)
-        canvas.tag_bind(art_item, "<Button-1>",
-                        lambda _e, k=record.key, n=name: self._choose_image(k, n))
+        self._clickable(art_item,
+                        lambda k=record.key, n=name: self._choose_image(k, n),
+                        "Choose a picture")
 
         name_item = canvas.create_text(
-            x + w // 2, y + self.px(70), text=name, fill=PRISM_TEXT_SOFT,
+            x + w // 2, y + self.px(72), text=name, fill=PRISM_TEXT_SOFT,
             font=("Segoe UI", 8), anchor="n", width=w - self.px(14), tags=tags,
         )
-        canvas.tag_bind(name_item, "<Button-1>",
-                        lambda _e, k=record.key, n=name: self._rename(k, n))
+        self._clickable(name_item, lambda k=record.key, n=name: self._rename(k, n),
+                        "Rename")
 
         level = record.describe_last_known()
         numeric = record.percent is not None
@@ -689,7 +810,7 @@ class Hud:
         age = format_age(now - record.last_online).replace(" ago", "")
 
         level_item = canvas.create_text(
-            x + w // 2, y + self.px(94), text=level, fill=colour,
+            x + w // 2, y + self.px(96), text=level, fill=colour,
             font=("Segoe UI", 10 if numeric else 8, "bold"), anchor="n", tags=tags,
         )
         bounds = canvas.bbox(level_item)
@@ -704,9 +825,9 @@ class Hud:
             age_width = age_bounds[2] - age_bounds[0] if age_bounds else 0
             total = width_of + gap + age_width
             left = x + w // 2 - total // 2
-            canvas.coords(level_item, left, y + self.px(94))
+            canvas.coords(level_item, left, y + self.px(96))
             canvas.itemconfigure(level_item, anchor="nw")
-            canvas.coords(age_item, left + width_of + gap, y + self.px(96))
+            canvas.coords(age_item, left + width_of + gap, y + self.px(98))
 
         self._card_items[index] = (card_item, w, h)
 

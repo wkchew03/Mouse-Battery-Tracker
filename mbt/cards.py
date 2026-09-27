@@ -149,22 +149,20 @@ def render_discharge_chart(
     return image.resize((width, height), Image.LANCZOS)
 
 
-def render_fade(width: int, height: int, colour, reverse: bool = False) -> Image.Image:
-    """Vertical fade to the ground colour, standing in for a scrollbar.
+def fade_mask(width: int, height: int, ramp: int, reverse: bool = False) -> Image.Image:
+    """Alpha for the shelf's scroll fades: clear at one end, solid at the other.
 
-    The list scrolls by wheel with no bar; this is what says there is more
-    below (or above) it.
+    The fade is painted from the colour field itself (see Hud._paint_fades), so
+    this is only the mask. Past `ramp` rows it is fully solid, which is what
+    hides the cards outright instead of dimming them. The fade stands in for a
+    scrollbar: it says there is more below (or, reversed, above).
     """
-    base = _rgba(colour)
-    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
+    column = Image.new("L", (1, height))
     for y in range(height):
-        t = y / max(1, height - 1)
-        if reverse:
-            t = 1 - t
-        draw.line((0, y, width, y), fill=(*base[:3], int(240 * (t ** 1.6))))
-    return image
-
+        distance = height - 1 - y if reverse else y
+        t = min(1.0, distance / max(1, ramp))
+        column.putpixel((0, y), int(round(255 * t ** 1.4)))
+    return column.resize((width, height))
 
 
 def render_icon(name: str, size: int, colour) -> Image.Image:
@@ -192,12 +190,16 @@ def render_icon(name: str, size: int, colour) -> Image.Image:
         draw.ellipse((centre - inner, centre - inner, centre + inner, centre + inner),
                      outline=ink, width=stroke)
     elif name == "folder":
-        left, right = s * 0.12, s * 0.88
-        top, bottom = s * 0.26, s * 0.78
-        draw.line((left, top + s * 0.06, left + s * 0.28, top + s * 0.06),
-                  fill=ink, width=stroke)
-        draw.line((left + s * 0.28, top + s * 0.06, left + s * 0.36, top),
-                  fill=ink, width=stroke)
+        # The tab sits on top of the body; drawn inside it, as it used to be,
+        # the icon read as a plain rectangle.
+        left, right = s * 0.10, s * 0.90
+        top, bottom = s * 0.34, s * 0.80
+        tab = s * 0.12
+        draw.line(
+            [(left, top), (left, top - tab), (left + s * 0.30, top - tab),
+             (left + s * 0.38, top)],
+            fill=ink, width=stroke, joint="curve",
+        )
         draw.rounded_rectangle((left, top, right, bottom), radius=int(s * 0.08),
                                outline=ink, width=stroke)
 

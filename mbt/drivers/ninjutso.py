@@ -42,7 +42,7 @@ import time
 from dataclasses import replace
 
 from .. import hidio
-from .base import DeviceInfo, Reading, matches, register
+from .base import DeviceInfo, Reading, device_key, matches, register
 
 VENDOR_NORDIC = 0x1915
 
@@ -122,6 +122,19 @@ def identity_for(product_id: int) -> str:
     return f"ninjutso:{product_id:04x}"
 
 
+# Receiver hardware key -> the identity its pairing query last returned. The
+# query does not always answer (seen with the mouse awake and the battery
+# query answering), and a receiver with no identity falls back to its USB key,
+# which split one Sora V2 into `1915:ae1c` and `ninjutso:ae11`. In memory only:
+# on a cold start the receiver is unnamed until its pairing answers once.
+_paired: dict[str, str] = {}
+
+
+def legacy_aliases() -> dict[str, str]:
+    """Receiver keys seen this session -> the mouse paired to them."""
+    return dict(_paired)
+
+
 class NinjutsoDriver:
     name = "ninjutso"
     vendor_ids = frozenset({VENDOR_NORDIC})
@@ -129,7 +142,9 @@ class NinjutsoDriver:
     def identity(self, info: DeviceInfo) -> str | None:
         """Wired ids name the mouse; a receiver's comes from its pairing."""
         pid = info.get("product_id")
-        return identity_for(pid) if pid in WIRED_PIDS else None
+        if pid in WIRED_PIDS:
+            return identity_for(pid)
+        return _paired.get(device_key(info))
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """The 0xffa0 command collection, one per physical device."""
@@ -167,6 +182,9 @@ class NinjutsoDriver:
                     paired = None
                 if paired is not None:
                     device_id = identity_for(paired)
+                    _paired[device_key(info)] = device_id
+                else:
+                    device_id = _paired.get(device_key(info))
 
             reading = None
             for _ in range(ATTEMPTS):

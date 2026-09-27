@@ -127,7 +127,8 @@ def test_unpaired_receiver_has_no_identity():
     assert ninjutso.parse_paired_pid(_with(PAIRED_AE11, _9=0, _10=0)) is None
 
 
-def test_wireless_and_wired_resolve_to_one_key():
+def test_wireless_and_wired_resolve_to_one_key(monkeypatch):
+    monkeypatch.setattr(ninjutso, "_paired", {})
     driver = ninjutso.NinjutsoDriver()
     paired = ninjutso.parse_paired_pid(PAIRED_AE11)
     assert driver.identity(_info(0xAE11)) == ninjutso.identity_for(paired)
@@ -177,6 +178,16 @@ def test_read_carries_the_paired_identity(monkeypatch):
 
     monkeypatch.setattr(ninjutso.hidio, "open_path", fake_open)
     monkeypatch.setattr(ninjutso, "REPLY_DELAY", 0)
-    reading = ninjutso.NinjutsoDriver().read(_info(0xAE1C))
+    monkeypatch.setattr(ninjutso, "_paired", {})
+    driver = ninjutso.NinjutsoDriver()
+    reading = driver.read(_info(0xAE1C))
     assert reading.percent == 85
     assert reading.device_id == "ninjutso:ae11"
+
+    # The pairing query going unanswered later must not split the mouse back
+    # out under the receiver's USB key -- that is how `1915:ae1c` appeared.
+    replies[ninjutso.CMD_PAIRED_PID] = FIRMWARE_REPLY
+    assert driver.read(_info(0xAE1C)).device_id == "ninjutso:ae11"
+    assert driver.identity(_info(0xAE1C)) == "ninjutso:ae11"
+    key = ninjutso.device_key(_info(0xAE1C))
+    assert ninjutso.legacy_aliases() == {key: "ninjutso:ae11"}

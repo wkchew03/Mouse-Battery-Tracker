@@ -1,15 +1,7 @@
 # Progress
 
 Where the project stands, what is left, and the decisions behind the current
-shape. Last updated 2026-09-15.
-
-## Do first
-
-**Nothing since `aff579d` is committed.** The working tree has 31 changed or
-untracked paths: the Prism HUD, the Finalmouse, VAXEE, ZOWIE and Ninjutso drivers, the
-HID++ desync fix, alias migration, settings, history and their tests. All 318
-tests pass. It should be committed, probably as several commits along those
-lines rather than one.
+shape. Last updated 2026-09-28.
 
 ## Open work
 
@@ -28,8 +20,6 @@ lines rather than one.
   coexists with vendor software. Logitech (HID++ `0x2201`) and VAXEE are the
   most tractable. Any write needs the command queue on the poll thread, never a
   write from the UI thread.
-- **Stream Deck icons are never pruned.** `feed.write_icons` only writes, so
-  icons outlive their records (17 icons for 15 records at last count).
 - **HUD panel spacing.** The connected-mouse panel has a large empty band
   between the status line and the chart. Faithful to the approved design, but
   more noticeable at real size.
@@ -60,15 +50,22 @@ lines rather than one.
 No backups of these survive: they were written to a session scratchpad that has
 since been cleared.
 
-- Deleted the duplicate record `373e:001c:0505D08F` ("LAMZU MAYA X"). If that
-  mouse is connected the same way again, the record will come back. The durable
-  fix is an `identity()` in `compx.py` tying it to `373e:001e`.
+- Deleted the duplicate record `373e:001c:0505D08F` ("LAMZU MAYA X"). Since
+  2026-09-28 `compx.py` gives `001c` and `001e` the shared identity
+  `lamzu:mayax`, so the wired form folds into the dongle's entry instead of
+  coming back as a duplicate. Not yet seen with the mouse actually wired.
 - Removed 23 history samples from `logitech:e4cd8e68`, every one an exact 15%
   between readings of 75-87%. They were `getCapabilities` replies parsed as
   battery by the HID++ desync bug.
 - Kept, at the user's choice: `373e:b01e`, a LAMZU dongle seen only in
   firmware-update mode, with `last_online` 0. Hidden from the HUD and tray;
   shown on the Stream Deck as "never".
+
+## Diagnostics
+
+- A driver `read()` that raises is logged to `%APPDATA%/MouseBatteryTracker/tray.log`
+  (`<driver> read failed on <key>: <exc>`) before it counts as offline. A
+  mouse that stays "off" while switched on: check there first.
 
 ## Decisions
 

@@ -76,8 +76,14 @@ def build_payload(store: Store, online_keys: set[str] | None = None) -> dict:
     }
 
 
+# What each icon on disk was last drawn from, so an unchanged mouse is not
+# re-rendered and rewritten every poll. In memory only: the first poll after a
+# restart redraws everything once.
+_drawn: dict[str, object] = {}
+
+
 def write_icons(store: Store, payload: dict) -> None:
-    """Render one icon per mouse.
+    """Render one icon per mouse, and delete icons whose mouse is gone.
 
     A user-supplied image (the same `images/` folder the HUD uses) wins over the
     drawn gauge, so a photo dropped in for the HUD shows on the Stream Deck too
@@ -88,7 +94,17 @@ def write_icons(store: Store, payload: dict) -> None:
     custom_dir = store.directory / "images"
 
     for entry in payload["mice"]:
+        target = icons / entry["icon"]
         image = load_custom(custom_dir, entry["key"], ICON_SIZE, entry["name"])
+        # A photo is compared by content (PIL's ==), so a replaced one is
+        # written again; a drawn gauge only by what it is drawn from.
+        signature = (
+            image
+            if image is not None
+            else (entry["percent"], entry["charging"], entry["connected"])
+        )
+        if _drawn.get(entry["icon"]) == signature and target.exists():
+            continue
         if image is None:
             image = render_mouse(
                 size=ICON_SIZE,
@@ -96,13 +112,22 @@ def write_icons(store: Store, payload: dict) -> None:
                 charging=entry["charging"],
                 online=entry["connected"],
             )
-        target = icons / entry["icon"]
         tmp = target.with_suffix(".png.tmp")
         try:
             image.save(tmp, "PNG")
             os.replace(tmp, target)
+            _drawn[entry["icon"]] = signature
         except OSError:
             continue
+
+    wanted = {entry["icon"] for entry in payload["mice"]}
+    for path in icons.iterdir():
+        if path.name not in wanted:
+            _drawn.pop(path.name, None)
+            try:
+                path.unlink()
+            except OSError:
+                continue
 
 
 def publish(store: Store, online_keys: set[str] | None = None) -> dict:

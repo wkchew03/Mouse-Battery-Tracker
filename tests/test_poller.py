@@ -107,6 +107,16 @@ def test_exception_counts_as_failure(patched):
     assert results[0][2].online is False
 
 
+def test_read_exception_is_logged(patched, monkeypatch):
+    """A parse bug must not pass silently as a mouse that is switched off."""
+    logged = []
+    monkeypatch.setattr(poller_module, "debug_log", logged.append)
+    patched(FakeDriver(IndexError("reply too short")))
+    Poller().poll(now=0)
+    assert len(logged) == 1
+    assert "fake" in logged[0] and "IndexError" in logged[0]
+
+
 def test_success_resets_backoff(patched):
     driver = patched(FakeDriver(OFFLINE))
     p = Poller(base_interval=60, failure_threshold=1)

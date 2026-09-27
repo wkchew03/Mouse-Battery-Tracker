@@ -11,7 +11,9 @@ platform entirely -- it uses report ID 0x03 with a checksummed `0x50` frame and
 never answers this command. That one is implemented in `ipi.py`.
 
 STATUS: verified on a CRDRAKO KO-ONE 8K receiver (373e:006b), cross-checked
-against the vendor's panel at 100%.
+against the vendor's panel at 100%. The LAMZU Maya X 8K dongle (373e:001e)
+has also been read (73%). Its wired pid 001c is only known from one stored
+record, and the two were merged by identity without being seen side by side.
 
 Note the command channel is not always on usage page 0xff00 -- the KO-ONE uses
 0xffff -- so the collection is chosen by which one declares a feature report.
@@ -22,7 +24,7 @@ from __future__ import annotations
 import time
 
 from .. import hidio, hidparse
-from .base import OFFLINE, DeviceInfo, Reading, matches, register
+from .base import OFFLINE, DeviceInfo, Reading, device_key, matches, register
 
 VENDOR_ATTACK_SHARK = 0x373E
 VENDOR_GWOLVES = 0x33E4
@@ -49,7 +51,32 @@ PIDS = {
     0x0050: "M5 Ultra (wireless)",
     0x0051: "M5 Ultra (wired)",
     0x006B: "CRDRAKO KO-ONE 8K receiver",
+    0x001C: "LAMZU Maya X (wired)",
+    0x001E: "LAMZU Maya X 8K dongle",
 }
+
+# One mouse, two USB devices with different serials: the Maya X on its cable
+# and its 8K dongle. Without a shared identity it shows as two entries, one of
+# which is always "off". Like ipi.py this merges by model, so two Maya Xs would
+# share an entry.
+MODEL_GROUPS = {
+    (VENDOR_ATTACK_SHARK, 0x001C): "lamzu:mayax",
+    (VENDOR_ATTACK_SHARK, 0x001E): "lamzu:mayax",
+}
+MODEL_NAMES = {"lamzu:mayax": "LAMZU Maya X"}
+
+# Hardware keys seen this session -> their group. The old keys carry the
+# serial, so unlike ipi.py's table they cannot be listed ahead of time.
+_seen_keys: dict[str, str] = {}
+
+
+def _group(info: DeviceInfo) -> str | None:
+    return MODEL_GROUPS.get((info.get("vendor_id"), info.get("product_id")))
+
+
+def legacy_aliases() -> dict[str, str]:
+    """Serial-keyed records from before the merge -> the merged identity."""
+    return dict(_seen_keys)
 
 # Cache of "does this collection declare a feature report", keyed by HID path.
 # Answering it means opening the device to read its descriptor, and candidates()
@@ -127,6 +154,16 @@ def parse_battery(response: bytes) -> Reading:
 class CompxDriver:
     name = "compx-gen2"
     vendor_ids = VENDOR_IDS
+
+    def identity(self, info: DeviceInfo) -> str | None:
+        group = _group(info)
+        if group:
+            _seen_keys[device_key(info)] = group
+        return group
+
+    def label(self, info: DeviceInfo) -> str | None:
+        group = _group(info)
+        return MODEL_NAMES.get(group) if group else None
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """Pick the collection that carries the command channel.

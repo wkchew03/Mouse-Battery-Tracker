@@ -23,6 +23,7 @@ from .drivers.base import (
     resolve_identity,
     resolve_label,
 )
+from .store import debug_log
 
 
 @dataclass
@@ -87,7 +88,11 @@ class Poller:
 
             try:
                 reading = driver.read(info)
-            except Exception:
+            except Exception as exc:
+                # Logged because a parse bug (an IndexError on a short reply)
+                # otherwise looks exactly like a mouse switched off, and is
+                # backed off rather than noticed.
+                debug_log(f"{driver.name} read failed on {hardware_key}: {exc!r}")
                 reading = OFFLINE
 
             if reading.online:

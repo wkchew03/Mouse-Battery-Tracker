@@ -6,7 +6,6 @@ callable hands back, so a wedged device can never freeze the UI.
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from typing import Callable, Iterable
@@ -17,7 +16,13 @@ from PIL import Image, ImageDraw  # noqa: F401  (Image used for LANCZOS)
 from . import autostart, feed
 from .cards import load_font
 from .drivers.base import Reading
-from .store import ALERT_CLEAR_MARGIN, DEFAULT_SETTINGS, Store, format_age
+from .store import (  # noqa: F401  (debug_log re-exported for callers)
+    ALERT_CLEAR_MARGIN,
+    DEFAULT_SETTINGS,
+    Store,
+    debug_log,
+    format_age,
+)
 from .theme import (  # noqa: F401  (re-exported for callers and tests)
     COLOR_CHARGING,
     COLOR_HIGH,
@@ -28,33 +33,6 @@ from .theme import (  # noqa: F401  (re-exported for callers and tests)
 )
 
 ICON_SIZE = 64
-
-# Diagnostic log. pystray swallows exceptions raised inside menu callbacks and
-# the app runs under pythonw with no console, so without a file there is no way
-# to see whether a menu click did anything at all.
-_LOG_PATH = None
-_LOG_LIMIT = 128 * 1024
-
-
-def debug_log(message: str) -> None:
-    global _LOG_PATH
-    # Tests construct TrayApp against a temp store, but this path is absolute,
-    # so without this they scribble their fake failures into the real log.
-    if "PYTEST_CURRENT_TEST" in os.environ:
-        return
-    try:
-        if _LOG_PATH is None:
-            from .store import app_dir
-
-            _LOG_PATH = app_dir() / "tray.log"
-            _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        if _LOG_PATH.exists() and _LOG_PATH.stat().st_size > _LOG_LIMIT:
-            _LOG_PATH.unlink()
-        stamp = time.strftime("%H:%M:%S")
-        with _LOG_PATH.open("a", encoding="utf-8") as handle:
-            handle.write(f"{stamp} {message}\n")
-    except Exception:
-        pass
 
 # Warn once per discharge cycle, not every poll. The mouse must climb back above
 # the clear level before it can warn again, so a level hovering on the

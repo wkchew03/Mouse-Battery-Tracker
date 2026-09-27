@@ -1,6 +1,7 @@
 """The feed published for the Stream Deck plugin."""
 
 import json
+import os
 import time
 
 from mbt import feed
@@ -100,3 +101,29 @@ def test_a_record_that_never_answered_says_never(tmp_path):
     entry = feed.build_payload(store)["mice"][0]
     assert entry["last_seen_text"] == "never"
     assert entry["percent"] is None
+
+
+def test_icons_of_forgotten_mice_are_deleted(tmp_path):
+    """The icon folder outlived its records (17 icons for 15 mice)."""
+    store = _store(tmp_path)
+    icons = feed.feed_dir(store) / "icons"
+    icons.mkdir(parents=True)
+    (icons / "gone_1.png").write_bytes(b"stale")
+    feed.publish(store, online_keys=set())
+    assert sorted(p.name for p in icons.iterdir()) == sorted(
+        e["icon"] for e in feed.build_payload(store)["mice"]
+    )
+
+
+def test_unchanged_icons_are_not_rewritten(tmp_path):
+    """Every poll redrew every icon; only a changed mouse should be written."""
+    store = _store(tmp_path)
+    feed.publish(store, online_keys={"a:1"})
+    icons = feed.feed_dir(store) / "icons"
+    for path in icons.iterdir():
+        os.utime(path, ns=(0, 0))
+
+    store.update("a:1", "Mouse A", Reading(online=True, percent=49))
+    feed.publish(store, online_keys={"a:1"})
+    changed = {p.name for p in icons.iterdir() if p.stat().st_mtime_ns != 0}
+    assert changed == {feed.icon_name("a:1")}

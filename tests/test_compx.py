@@ -127,3 +127,21 @@ def test_unrelated_vendor_is_not_claimed(monkeypatch):
     info = _info(0xFFFF, b"other", usage=0, interface=2)
     info["vendor_id"] = 0x1532  # Razer
     assert compx.CompxDriver().candidates([info]) == []
+
+
+def test_maya_x_wired_and_dongle_share_one_identity():
+    """Each form has its own serial, so it showed as two mice, one always off."""
+    driver = compx.CompxDriver()
+    wired = {"vendor_id": 0x373E, "product_id": 0x001C, "serial_number": "0505D08F"}
+    dongle = {"vendor_id": 0x373E, "product_id": 0x001E, "serial_number": "BA36ABCD2274BC71"}
+    assert driver.identity(wired) == driver.identity(dongle) == "lamzu:mayax"
+    assert driver.label(wired) == "LAMZU Maya X"
+    # The records already stored under the serial keys fold into it.
+    aliases = compx.legacy_aliases()
+    assert aliases["373e:001e:BA36ABCD2274BC71"] == "lamzu:mayax"
+    assert aliases["373e:001c:0505D08F"] == "lamzu:mayax"
+
+
+def test_other_compx_devices_keep_their_hardware_key():
+    ko_one = {"vendor_id": 0x373E, "product_id": 0x006B, "serial_number": "X"}
+    assert compx.CompxDriver().identity(ko_one) is None

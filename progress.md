@@ -20,6 +20,10 @@ shape. Last updated 2026-09-28.
   coexists with vendor software. Logitech (HID++ `0x2201`) and VAXEE are the
   most tractable. Any write needs the command queue on the poll thread, never a
   write from the UI thread.
+- **Shelf card names in a narrow window.** At the minimum window width, long
+  names wrap to two lines and run into the level below them ("Razer Viper V3
+  Pro" over "85%"). Fine at the default width. Deferred on 2026-09-28; the
+  likely fix is one line truncated with "…".
 - **HUD panel spacing.** The connected-mouse panel has a large empty band
   between the status line and the chart. Faithful to the approved design, but
   more noticeable at real size.

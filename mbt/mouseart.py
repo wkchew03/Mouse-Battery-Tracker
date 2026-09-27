@@ -17,7 +17,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageOps
 
 from .theme import COLOR_UNKNOWN, HUD_TRACK, level_color
 
@@ -72,13 +72,37 @@ def load_custom(
     return None
 
 
+# Opacity at or below this counts as empty when trimming a photo, so a soft
+# drop shadow or antialiasing haze does not count as part of the mouse.
+TRIM_ALPHA = 24
+
+# Share of the square a trimmed photo fills. Close to the drawn silhouette's
+# 0.86 height, so photos and drawn mice come out the same size side by side.
+ART_FILL = 0.9
+
+
+def trim(image: Image.Image) -> Image.Image:
+    """Crop an RGBA image to the mouse, dropping its transparent margin.
+
+    Product shots come with whatever margin the vendor gave them -- in the
+    images folder the mouse fills anywhere from 73% to 94% of the frame -- so
+    fitting the whole frame drew some mice a fifth smaller than others.
+    """
+    mask = image.getchannel("A").point(lambda a: 255 if a > TRIM_ALPHA else 0)
+    box = mask.getbbox()
+    return image.crop(box) if box else image
+
+
 # The HUD repaints every card several times per open, and decoding a 2048px
 # photo each time cost ~0.25s a rebuild. Keyed on mtime so a replaced photo is
 # picked up. Callers must not mutate the returned image: it is shared.
 @lru_cache(maxsize=64)
 def _thumbnail(path: Path, mtime_ns: int, size: int) -> Image.Image:
-    image = Image.open(path).convert("RGBA")
-    image.thumbnail((size, size), Image.LANCZOS)
+    fit = max(1, round(size * ART_FILL))
+    # contain() rather than thumbnail(): it also scales up, so a small photo
+    # is not left smaller than the rest.
+    image = ImageOps.contain(trim(Image.open(path).convert("RGBA")), (fit, fit),
+                             Image.LANCZOS)
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     canvas.alpha_composite(
         image, ((size - image.width) // 2, (size - image.height) // 2)

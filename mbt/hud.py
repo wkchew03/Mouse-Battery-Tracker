@@ -59,8 +59,15 @@ WINDOW_HEIGHT = 600
 PAD = 16
 
 PANEL_WIDTH = 320
-PANEL_ART = 120
-PANEL_ART_HEIGHT = 166
+# The connected mouse's picture is PANEL_ART_MAX where there is room, and
+# otherwise whatever height the panel has left after the text and chart below
+# it (PANEL_BELOW_ART), so a shorter window shrinks it instead of overlapping.
+# 210 was chosen by eye: 120 read as too small, filling half the panel (264)
+# as too large.
+PANEL_ART_TOP = 24
+PANEL_BELOW_ART = 280
+PANEL_ART_MIN = 80
+PANEL_ART_MAX = 210
 CHART_HEIGHT = 92
 
 CARD_HEIGHT = 126
@@ -556,18 +563,23 @@ class Hud:
             percent = record.percent
         colour = to_hex(level_color(percent, bool(reading.charging)))
 
-        art_size = self.px(PANEL_ART)
+        art_size = max(
+            self.px(PANEL_ART_MIN),
+            min(self.px(PANEL_ART_MAX), w - self.px(40),
+                h - self.px(PANEL_ART_TOP + PANEL_BELOW_ART)),
+        )
         art = load_custom(self.images_dir, key, art_size, name) or render_mouse(
             size=art_size, percent=percent, charging=bool(reading.charging), online=True
         )
         art_photo = self._sprite(art)
         art_item = canvas.create_image(
-            x + w // 2, y + self.px(30), image=art_photo, anchor="n", tags=("paint",)
+            x + w // 2, y + self.px(PANEL_ART_TOP), image=art_photo, anchor="n",
+            tags=("paint",)
         )
         self._clickable(art_item, lambda k=key, n=name: self._choose_image(k, n),
                         "Choose a picture")
 
-        top = y + self.px(30) + self.px(PANEL_ART_HEIGHT)
+        top = y + self.px(PANEL_ART_TOP) + art_size
 
         # The number and its sign are separate items so they can be sized apart.
         shown = "--" if percent is None else str(percent)

@@ -281,3 +281,27 @@ def test_custom_image_is_cached_until_the_file_changes(tmp_path):
     os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
     replaced = load_custom(tmp_path, "k", 64, "Mouse")
     assert replaced.getpixel((32, 32))[:3] == (0, 0, 255)
+
+
+def test_custom_images_are_trimmed_to_the_mouse(tmp_path):
+    """Two photos of the same mouse with different transparent margins must
+    come out the same size -- the margin is the vendor's, not the mouse's."""
+    from PIL import Image
+
+    from mbt.mouseart import custom_image_path, load_custom
+
+    def photo(name, frame, margin):
+        image = Image.new("RGBA", (frame, frame), (0, 0, 0, 0))
+        body = Image.new("RGBA", (frame - 2 * margin, frame - 2 * margin),
+                         (200, 0, 0, 255))
+        image.alpha_composite(body, (margin, margin))
+        # A faint shadow beyond the body is not part of the mouse.
+        image.putpixel((1, 1), (0, 0, 0, 10))
+        image.save(custom_image_path(tmp_path, name, name))
+
+    photo("tight", 400, 10)
+    photo("loose", 400, 120)
+    tight = load_custom(tmp_path, "tight", 64, "tight").getchannel("A").getbbox()
+    loose = load_custom(tmp_path, "loose", 64, "loose").getchannel("A").getbbox()
+    assert tight == loose
+    assert tight[3] - tight[1] >= 56

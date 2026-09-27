@@ -369,6 +369,13 @@ class Hud:
         root = self._root
         if root is None:
             return
+        # Already open: just bring it forward. pystray fires the default action
+        # on every click, so a double-click on the tray icon arrives as two
+        # shows, and each used to cost a device poll and a full rebuild.
+        if root.state() in ("normal", "zoomed"):
+            root.lift()
+            root.focus_force()
+            return
         # Ask for a fresh reading as the window opens; the result arrives via
         # the queue and triggers another rebuild.
         if self.on_refresh is not None:

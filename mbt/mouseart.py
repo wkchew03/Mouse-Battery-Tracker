@@ -14,6 +14,7 @@ after the device key; see `custom_image_path`.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -63,15 +64,20 @@ def candidate_paths(directory: Path, key: str, name: str = "") -> list[Path]:
 def load_custom(
     directory: Path, key: str, size: int, name: str = ""
 ) -> Image.Image | None:
-    image = None
     for path in candidate_paths(directory, key, name):
         try:
-            image = Image.open(path).convert("RGBA")
-            break
+            return _thumbnail(path, path.stat().st_mtime_ns, size)
         except (OSError, ValueError):
             continue
-    if image is None:
-        return None
+    return None
+
+
+# The HUD repaints every card several times per open, and decoding a 2048px
+# photo each time cost ~0.25s a rebuild. Keyed on mtime so a replaced photo is
+# picked up. Callers must not mutate the returned image: it is shared.
+@lru_cache(maxsize=64)
+def _thumbnail(path: Path, mtime_ns: int, size: int) -> Image.Image:
+    image = Image.open(path).convert("RGBA")
     image.thumbnail((size, size), Image.LANCZOS)
     canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     canvas.alpha_composite(

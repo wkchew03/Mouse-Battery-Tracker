@@ -260,3 +260,24 @@ def test_merge_aliases_does_nothing_when_the_old_key_is_absent(tmp_path):
     store.update("new:1", "Mouse", Reading(online=True, percent=50))
     assert store.merge_aliases({"old:1": "new:1"}) == 0
     assert store.records["new:1"].percent == 50
+
+
+def test_custom_image_is_cached_until_the_file_changes(tmp_path):
+    """The HUD repaints every card several times per open; decoding each photo
+    every time is what made opening it slow. A replaced photo must still show."""
+    import os
+
+    from PIL import Image
+
+    from mbt.mouseart import custom_image_path, load_custom
+
+    path = custom_image_path(tmp_path, "k", "Mouse")
+    Image.new("RGBA", (400, 400), (255, 0, 0, 255)).save(path)
+    first = load_custom(tmp_path, "k", 64, "Mouse")
+    assert load_custom(tmp_path, "k", 64, "Mouse") is first
+
+    Image.new("RGBA", (400, 400), (0, 0, 255, 255)).save(path)
+    stat = os.stat(path)
+    os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000))
+    replaced = load_custom(tmp_path, "k", 64, "Mouse")
+    assert replaced.getpixel((32, 32))[:3] == (0, 0, 255)

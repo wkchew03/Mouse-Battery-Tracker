@@ -811,7 +811,10 @@ class Hud:
 
         name_item = canvas.create_text(
             x + w // 2, y + self.px(72), text=name, fill=PRISM_TEXT_SOFT,
-            font=("Segoe UI", 8), anchor="n", width=w - self.px(14), tags=tags,
+            font=("Segoe UI", 8), anchor="n", width=w - self.px(14),
+            # Tk left-aligns the lines of wrapped text by default, so a long
+            # name's second line sat flush left under a centred first line.
+            justify="center", tags=tags,
         )
         self._clickable(name_item, lambda k=record.key, n=name: self._rename(k, n),
                         "Rename")

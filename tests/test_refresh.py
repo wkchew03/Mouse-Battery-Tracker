@@ -26,7 +26,6 @@ class FakeIcon:
 
 class FakeDriver:
     name = "fake"
-    vendor_ids = frozenset({0x1234})
 
     def __init__(self, readings):
         self.readings = list(readings)

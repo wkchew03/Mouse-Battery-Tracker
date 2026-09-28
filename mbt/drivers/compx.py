@@ -153,7 +153,6 @@ def parse_battery(response: bytes) -> Reading:
 
 class CompxDriver:
     name = "compx-gen2"
-    vendor_ids = VENDOR_IDS
 
     def identity(self, info: DeviceInfo) -> str | None:
         group = _group(info)

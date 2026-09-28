@@ -119,7 +119,6 @@ def parse_battery(response: bytes) -> int | None:
 
 class RazerDriver:
     name = "razer"
-    vendor_ids = frozenset({VENDOR_RAZER})
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """Pick the control collection for each Razer device.

@@ -16,8 +16,6 @@ COLOR_CHARGING: RGBA = (74, 158, 232, 255)
 
 # HUD surfaces. Dark by default: this window is opened mid-session, often over a
 # game, and a white panel is jarring in that context.
-HUD_BG = "#1e1f24"
-HUD_TEXT = "#e8e9ed"
 HUD_MUTED = "#9a9ca6"
 HUD_TRACK = "#3a3d46"
 
@@ -47,6 +45,11 @@ PRISM_CARD_EDGE: RGBA = (255, 255, 255, 20)
 PRISM_CARD_EDGE_HOVER: RGBA = (255, 255, 255, 46)
 PRISM_PANEL: RGBA = (16, 17, 24, 128)
 PRISM_PANEL_EDGE: RGBA = (127, 216, 205, 128)
+# The "Add mouse" overlay: a scrim that dims the window behind it, and a card
+# more opaque than the panels, since it carries paragraphs rather than a
+# number and a name.
+PRISM_SCRIM: RGBA = (6, 6, 10, 178)
+PRISM_OVERLAY: RGBA = (16, 17, 24, 225)
 
 # Canvas text has no alpha, so these are the design's translucent inks already
 # blended against the frosted card they sit on.

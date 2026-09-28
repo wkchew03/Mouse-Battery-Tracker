@@ -58,7 +58,6 @@ def test_unverified_models_are_not_merged():
 def test_identity_falls_back_to_hardware_key():
     class Bare:
         name = "bare"
-        vendor_ids = frozenset()
 
     info = dict(_info(0x1014), vendor_id=0x1532, product_id=0x007B)
     assert resolve_identity(Bare(), info) == "1532:007b"
@@ -67,7 +66,6 @@ def test_identity_falls_back_to_hardware_key():
 def test_driver_errors_do_not_break_identity():
     class Broken:
         name = "broken"
-        vendor_ids = frozenset()
 
         def identity(self, info):
             raise RuntimeError("boom")

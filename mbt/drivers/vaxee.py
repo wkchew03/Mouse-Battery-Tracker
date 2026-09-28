@@ -85,7 +85,6 @@ def parse_level(response: bytes) -> int | None:
 
 class VaxeeDriver:
     name = "vaxee"
-    vendor_ids = frozenset({VENDOR_VAXEE})
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """The 0xff05 command collection, one per physical device."""

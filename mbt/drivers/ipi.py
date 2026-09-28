@@ -137,7 +137,6 @@ def parse_basic_info(response: bytes) -> Reading:
 
 class IpiDriver:
     name = "ipi"
-    vendor_ids = frozenset({VENDOR_IPI})
 
     def identity(self, info: DeviceInfo) -> str | None:
         """Same id for the wired and wireless forms of one mouse."""

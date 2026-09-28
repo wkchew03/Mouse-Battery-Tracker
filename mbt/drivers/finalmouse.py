@@ -157,7 +157,6 @@ def is_linked(body: bytes) -> bool:
 
 class FinalmouseDriver:
     name = "finalmouse"
-    vendor_ids = frozenset({VENDOR_FINALMOUSE})
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """The vendor collection of each Finalmouse device, once."""

@@ -214,7 +214,6 @@ def parse_battery_status(params: bytes) -> Reading:
 
 class LogitechDriver:
     name = "logitech"
-    vendor_ids = frozenset({VENDOR_LOGITECH})
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """Prefer the long-report vendor collection (0xff00 / usage 0x0002)."""
@@ -358,10 +357,6 @@ class LogitechDriver:
         if unit:
             _unit_cache[ident] = unit
         return unit
-
-    def _read_device(self, dev, device_index: int) -> Reading | None:
-        found = self._discover_route(dev, device_index)
-        return found[2] if found else None
 
     def read(self, info: DeviceInfo) -> Reading:
         ident = (

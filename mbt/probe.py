@@ -12,11 +12,15 @@ turns "guess the protocol" into "read the sizes off the device".
 
 from __future__ import annotations
 
+import io
 import json
 from collections import defaultdict
+from contextlib import redirect_stdout
+from typing import NamedTuple
 
 from . import hidio, hidparse
 from .drivers.base import KNOWN_VENDORS, describe_device, device_key
+from .drivers.adopted import is_mouse_collection
 
 
 def is_vendor_defined(info: dict) -> bool:
@@ -178,3 +182,69 @@ def run(
         print("Power on each mouse (or plug in its dongle) and re-run.")
 
     return 0
+
+
+# ---- the HUD's "Add mouse" scan ----------------------------------------------
+
+
+class UnknownMouse(NamedTuple):
+    key: str
+    vendor_id: int
+    product_id: int
+    name: str
+    note: str
+    # This probe's full output for the device: what adding a driver starts from.
+    report: str
+
+
+def unknown_mice(infos: list[dict], claimed: set[str]) -> list[list[dict]]:
+    """The collections of every mouse-like device that no driver claimed."""
+    groups: dict[str, list[dict]] = defaultdict(list)
+    for info in infos:
+        key = device_key(info)
+        if key not in claimed:
+            groups[key].append(info)
+    return [c for c in groups.values() if any(is_mouse_collection(i) for i in c)]
+
+
+def diagnose(collections: list[dict]) -> str:
+    """One line on why no driver reads this device, from enumeration alone."""
+    vendor = KNOWN_VENDORS.get(collections[0]["vendor_id"])
+    if vendor:
+        return f"{vendor} is supported, but not this model yet."
+    if any(is_standard_battery(i) for i in collections):
+        return "Declares a standard HID battery usage, which no driver reads yet."
+    if any(is_vendor_defined(i) for i in collections):
+        return "Has a vendor channel, so its battery needs a new driver."
+    return "Exposes no channel a battery could be read from."
+
+
+def report(vendor_id: int, product_id: int) -> str:
+    """`probe --descriptors --read-features` for one device, as text."""
+    out = io.StringIO()
+    with redirect_stdout(out):
+        run(vendor_id, product_id, descriptors=True, read_features=True)
+    return out.getvalue()
+
+
+def scan() -> tuple[dict[str, str], list[UnknownMouse]]:
+    """Every tracked mouse (key -> label), and every mouse nothing claims.
+
+    Opens devices, so it must run on the poll thread, never the UI's.
+    """
+    from .app import discover
+    from .drivers.base import resolve_identity, resolve_label
+
+    infos = hidio.enumerate_devices()
+    found = discover()
+    tracked = {resolve_identity(d, i): resolve_label(d, i) for d, i in found}
+    claimed = {device_key(i) for _, i in found}
+    unknown = []
+    for collections in unknown_mice(infos, claimed):
+        first = collections[0]
+        vid, pid = first["vendor_id"], first["product_id"]
+        unknown.append(UnknownMouse(
+            device_key(first), vid, pid, describe_device(first),
+            diagnose(collections), report(vid, pid),
+        ))
+    return tracked, unknown

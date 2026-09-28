@@ -82,7 +82,6 @@ def is_command_collection(info: DeviceInfo) -> bool:
 
 class ZowieDriver:
     name = "zowie"
-    vendor_ids = frozenset({VENDOR_ZOWIE})
 
     def candidates(self, infos: list[DeviceInfo]) -> list[DeviceInfo]:
         """The 0xff03 collection of every device that is also a mouse."""

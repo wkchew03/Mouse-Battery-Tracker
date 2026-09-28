@@ -6,6 +6,7 @@ callable hands back, so a wedged device can never freeze the UI.
 
 from __future__ import annotations
 
+import queue
 import threading
 import time
 from typing import Callable, Iterable
@@ -97,6 +98,8 @@ class TrayApp:
         self._online: list[tuple[str, str, Reading]] = []
         # Device keys already warned about in their current discharge cycle.
         self._warned: set[str] = set()
+        # Work that has to touch HID, run on the poll thread, which owns it.
+        self._jobs: queue.Queue = queue.Queue()
 
         self.icon = pystray.Icon(
             "mbt",
@@ -261,8 +264,20 @@ class TrayApp:
         self._check_low_battery(online)
         self._refresh_ui()
 
+    def _run_jobs(self) -> None:
+        while True:
+            try:
+                job = self._jobs.get_nowait()
+            except queue.Empty:
+                return
+            try:
+                job()
+            except Exception as exc:
+                debug_log(f"poll-thread job failed: {exc!r}")
+
     def _loop(self) -> None:
         while not self._stop.is_set():
+            self._run_jobs()
             self.poll_once()
             # Wake early when the user asks for a manual refresh.
             self._wake.wait(self.poll_interval)
@@ -288,6 +303,15 @@ class TrayApp:
             pass
 
         self._wake.set()
+
+    def run_on_poll_thread(self, job: Callable[[], None]) -> None:
+        """Run `job` on the poll thread, then poll. Safe to call from any thread.
+
+        For the UI's HID work (the HUD's "Add mouse" scan): the UI threads
+        never open a device, and queueing it here keeps it from racing a poll.
+        """
+        self._jobs.put(job)
+        self.request_refresh("job")
 
     def _on_refresh(self, icon=None, item=None) -> None:
         self.request_refresh("menu")

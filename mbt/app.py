@@ -137,6 +137,7 @@ def run_tray(mock: bool = False, interval: float = 60.0) -> int:
     # Opening the HUD wakes the poll loop, so the window shows a reading taken
     # just now rather than up to `interval` seconds ago.
     hud.on_refresh = app.request_refresh
+    hud.run_on_poll_thread = app.run_on_poll_thread
     if mock:
         print("Running tray with mock data. Right-click the tray icon.")
     app.run()

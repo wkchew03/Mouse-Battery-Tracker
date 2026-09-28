@@ -61,6 +61,9 @@ Windows tray app that reads gaming-mouse battery over USB HID. Layers, bottom up
   window. The shelf scrolls by moving the `shelf` tag, and the fades are what
   stand in for the scrollbar. The alert settings are a dialog behind the panel's
   gear (`_open_settings`), not inline -- the approved design has no room for them.
+  "Add mouse" is an overlay drawn on the same canvas (`_paint_overlay`, one
+  `view` per step), repainted at the end of every `_rebuild` so a poll landing
+  mid-flow does not wipe it.
 - `design/` holds the Claude Design canvas the current HUD was drawn from. The
   app never imports it; it exists to iterate on the look.
 
@@ -68,7 +71,9 @@ Windows tray app that reads gaming-mouse battery over USB HID. Layers, bottom up
 
 - **The tray/UI threads never touch HID.** pystray owns the main thread, Tk runs
   on its own thread and owns its widgets; the tray posts onto a queue drained by
-  Tk's `after()`. `TrayApp` only consumes a `provider` callable.
+  Tk's `after()`. `TrayApp` only consumes a `provider` callable. UI work that
+  must open a device (the "Add mouse" scan, `probe.scan()`) goes through
+  `TrayApp.run_on_poll_thread`, so it never races a poll.
 - **Devices are matched on the full `(vid, pid, interface_number, usage_page,
   usage)` tuple** via `matches()`, never vid/pid alone — every mouse exposes 3–6
   collections and only the vendor-defined one answers. On the CompX gen-2
@@ -99,12 +104,16 @@ Windows tray app that reads gaming-mouse battery over USB HID. Layers, bottom up
   offending report is still in flight when the drain runs.
 - **`Reading(online=False)` means "mouse powered off", not "read failed."** A
   dongle stays enumerated with its mouse off, so only a successful protocol
-  exchange proves presence. `read()` raises on transport failure so the poller
-  can back off. The one exception is `zowie.py`, which has no protocol at all
-  and reports presence from enumeration — see its docstring before copying that
-  pattern anywhere else. A dongle can also answer *about* a sleeping mouse:
-  Finalmouse's `CMD_ID_VBAT` replies from cache, so presence there comes from
-  `CMD_ID_LINK_STATE` instead, never from the voltage reply existing.
+  exchange proves presence. (`adopted.py` reads a user-confirmed unknown mouse
+  through a real driver, disguised as that driver's model -- see its
+  docstring.) `read()` raises on transport failure so the poller
+  can back off. The exceptions are `zowie.py`, which has no protocol at all,
+  and the placeholders in `adopted.py` (mice the user added from the HUD's
+  "Add mouse" card because no driver reads them); both report presence from
+  enumeration — see
+  `zowie.py`'s docstring before copying that pattern anywhere else. A dongle
+  can also answer *about* a sleeping mouse: Finalmouse's `CMD_ID_VBAT` replies
+  from cache, so presence there comes from `CMD_ID_LINK_STATE` instead, never from the voltage reply existing.
 - **Never invent a percentage.** Coarse Logitech buckets go in `bucket`, raw
   millivolts in `millivolts`. On the Pulsar/Hitscan platform the level byte is
   deliberately ignored in favour of the voltage curve, because that is what the

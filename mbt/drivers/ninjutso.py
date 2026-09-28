@@ -137,7 +137,6 @@ def legacy_aliases() -> dict[str, str]:
 
 class NinjutsoDriver:
     name = "ninjutso"
-    vendor_ids = frozenset({VENDOR_NORDIC})
 
     def identity(self, info: DeviceInfo) -> str | None:
         """Wired ids name the mouse; a receiver's comes from its pairing."""

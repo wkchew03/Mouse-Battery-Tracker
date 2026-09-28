@@ -124,7 +124,6 @@ def parse_power(response: bytes, protocol: str) -> Reading:
 
 class OrbitalDriver:
     name = "orbital"
-    vendor_ids = frozenset({VENDOR_ORBITAL})
 
     def identity(self, info: DeviceInfo) -> str | None:
         return MODEL_GROUPS.get(info.get("product_id"))

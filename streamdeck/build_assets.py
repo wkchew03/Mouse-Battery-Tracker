@@ -17,7 +17,7 @@ sys.path.insert(0, str(REPO))
 from PIL import Image, ImageDraw  # noqa: E402
 
 from mbt.mouseart import render_mouse  # noqa: E402
-from mbt.theme import HUD_BG, HUD_MUTED, HUD_TEXT  # noqa: E402
+from mbt.theme import HUD_MUTED  # noqa: E402
 
 PLUGIN = Path(__file__).resolve().parent / "com.kai.mousebattery.sdPlugin"
 IMGS = PLUGIN / "imgs"

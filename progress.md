@@ -28,7 +28,20 @@ shape. Last updated 2026-09-28.
   between the status line and the chart. Faithful to the approved design, but
   more noticeable at real size.
 
+- **Removing a placeholder or adoption.** "Add mouse" can add entries to
+  `adopted.json` but nothing removes one, and no
+  mouse record can be forgotten from the UI either. Delete the entry from the
+  file by hand.
+
 ## Not yet verified
+
+- **"Add mouse" in the running app.** The scan was run on real hardware (found
+  the Viper as tracked and the SINO WEALTH keyboard as unrecognised, since
+  keyboards expose a mouse collection too), and every step of the overlay was
+  screenshotted in a preview with a faked scan result. The full click-through,
+  scan on the poll thread and a placeholder then appearing, has not been done.
+  "Try known protocols" has never been run against real hardware: it sends
+  other vendors' commands, so it was left for the user to start.
 
 - **Ninjutso Sora V2 asleep and wired.** Only the `ae1c` receiver with the
   mouse awake has been read (85%, matching the configurator). The awake flag
@@ -78,6 +91,14 @@ since been cleared.
 - **No invented percentages.** Voltage is shown as voltage (Finalmouse), absence
   as absence (ZOWIE), and the Pulsar platform uses the vendor's voltage curve
   rather than its level byte, because that is what the vendor displays.
+- **"Add mouse" is a pill in a fixed header above the shelf**, beside the
+  mouse count, so it is reachable without scrolling. It started as a card at
+  the end of the shelf, which a long shelf pushed out of view.
+- **"Add mouse" is an overlay on the HUD canvas, not a second window**: a
+  scrim and a frosted card, one step at a time (scan, results, confirm,
+  protocol results, name). Buttons are canvas-drawn, so keyboard use is
+  hand-built: Tab/Shift-Tab move a focus ring, Enter activates, Escape steps
+  back.
 - **Prism HUD.** Chosen from three colour treatments. Connected mouse pinned
   left, every other mouse on a scrolling shelf with no scrollbar, a discharge
   chart on the connected mouse. The alert settings moved behind the gear rather
@@ -85,6 +106,11 @@ since been cleared.
 - **Animated background is panned, not frame-looped.** A frame loop would cost
   about 130 MB of `PhotoImage` in an app that advertises 45 MB. Measured after
   the change: 44.5 MB. The timer idles at 700 ms while the window is hidden.
+  That figure is the app with the window never opened (43.9 MB re-measured
+  2026-09-29). Opening the window takes it to about 77-85 MB, and it stays
+  there after hiding: the sprites and field are kept, not freed. True of the
+  last commit before "Add mouse" too; the "Add mouse" overlay adds ~13 MB only
+  while it is open.
 - **Charts use the full 0-100 axis.** Scaling to fit would draw a five-point
   drop as a cliff.
 - **Ages are in days all the way up** ("23d ago"), never weeks, at the user's
@@ -92,6 +118,15 @@ since been cleared.
   absolute timestamp.
 - **The HUD shows every remembered mouse.** The tray menu stays capped at 6
   because it cannot scroll.
+- **"Add mouse" tries known protocols only when asked, and the user is the
+  check.** The scan re-detects supported mice and runs the read-only probe on
+  anything unclaimed. "Try known protocols" (opt-in, behind a confirm) sends
+  each driver's battery query to the unknown mouse, disguised as the model
+  the driver was written for (`drivers/adopted.py`), and shows every answer.
+  Nothing is kept until the user says it matches the vendor's software: a
+  plausible wrong number is the failure this project has shipped twice. The
+  fallbacks are a placeholder ("no battery data") and the probe report for
+  writing a real driver, which then claims the device ahead of both.
 - **Alias migration runs after every poll.** Logitech's unit id is only known
   after a live read, so checking once at startup would leave a mouse split
   under its old key.

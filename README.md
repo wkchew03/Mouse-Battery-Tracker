@@ -6,7 +6,9 @@ configurator just to check a percentage.
 
 - **Read-only.** It never writes settings, and it opens and closes the device
   around each read, so it coexists with vendor software rather than fighting it.
-- **Light.** ~45 MB RAM and effectively 0% CPU between polls (default: 60 s).
+- **Light.** ~45 MB RAM while it sits in the tray (about 80 MB once the detail
+  window has been opened, which keeps its images loaded after you close it)
+  and effectively 0% CPU between polls (default: 60 s).
   No GPU context, no web view, no bundled browser. The detail window's drifting
   background is one pre-rendered image being panned, so it costs a coordinate
   change per frame and only while the window is actually open.

@@ -21,6 +21,7 @@ from . import (  # noqa: E402,F401
     ninjutso,
     finalmouse,
     zowie,
+    adopted,  # user-added, so a real driver for the same device wins
 )
 
 __all__ = ["Driver", "Reading", "all_drivers", "device_key", "register"]

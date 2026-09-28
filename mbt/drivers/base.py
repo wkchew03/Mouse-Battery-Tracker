@@ -22,7 +22,7 @@ from typing import Iterable, Protocol
 DeviceInfo = dict
 
 # Vendors we have (or plan to have) a driver for. Used by the probe output to
-# highlight interesting devices and by drivers to declare what they handle.
+# highlight interesting devices and by the Add mouse scan's diagnosis.
 VENDOR_RAZER = 0x1532
 VENDOR_LOGITECH = 0x046D
 VENDOR_PULSAR = 0x3554
@@ -235,7 +235,6 @@ class Driver(Protocol):
     """
 
     name: str
-    vendor_ids: frozenset[int]
 
     def candidates(self, infos: Iterable[DeviceInfo]) -> list[DeviceInfo]:
         """Select the collection(s) this driver can talk to.

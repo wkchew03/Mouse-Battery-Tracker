@@ -1,6 +1,6 @@
 """Persistence for last-known battery levels and user-assigned names.
 
-Two files under %APPDATA%\\MouseBatteryTracker:
+Files under %APPDATA%\\MouseBatteryTracker:
 
 - state.json  last known reading per device, so a mouse that is currently off
               can still be shown under "Recent" with its last level and when it
@@ -11,6 +11,8 @@ Two files under %APPDATA%\\MouseBatteryTracker:
 - settings.json  the handful of preferences the HUD exposes. Separate from
               state.json so toggling a checkbox does not rewrite the whole
               history file, which is two orders of magnitude larger.
+- adopted.json  mice added from the HUD's "Add mouse" scan; owned by
+              drivers/adopted.py, which reads it every poll.
 
 Writes are atomic (temp file + os.replace) because the tray app can be killed at
 any moment, and a half-written state file would lose every device's history.

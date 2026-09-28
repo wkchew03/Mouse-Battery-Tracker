@@ -227,7 +227,6 @@ def _collection_score(info: DeviceInfo) -> int:
 
 class PulsarDriver:
     name = "pulsar"
-    vendor_ids = VENDOR_IDS
 
     def __init__(self) -> None:
         # Last known device address per dongle. A dongle that answers the

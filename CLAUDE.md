@@ -59,10 +59,9 @@ Windows tray app that reads gaming-mouse battery over USB HID. Layers, bottom up
   keeps native font rendering. Hover repaints one sprite via `_card_items` /
   `_repaint_chart`; a full `_rebuild()` on hover re-renders every card in the
   window. The shelf scrolls by moving the `shelf` tag, and the fades are what
-  stand in for the scrollbar. The alert settings are a dialog behind the panel's
-  gear (`_open_settings`), not inline -- the approved design has no room for them.
-  "Add mouse" is an overlay drawn on the same canvas (`_paint_overlay`, one
-  `view` per step), repainted at the end of every `_rebuild` so a poll landing
+  stand in for the scrollbar. "Add mouse" and the alert settings behind the panel's
+  gear are overlays drawn on the same canvas (`_paint_overlay`, one `view` per
+  step; settings is `_overlay_settings`), repainted at the end of every `_rebuild` so a poll landing
   mid-flow does not wipe it.
 - `design/` holds the Claude Design canvas the current HUD was drawn from. The
   app never imports it; it exists to iterate on the look.

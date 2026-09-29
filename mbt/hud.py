@@ -31,12 +31,7 @@ from . import autostart, dpi, history, prism
 from .cards import fade_mask, render_discharge_chart, render_frost, render_icon
 from .drivers.base import Reading
 from .mouseart import install_image, load_custom, render_mouse
-from .store import (
-    MAX_ALERT_THRESHOLD,
-    MIN_ALERT_THRESHOLD,
-    Store,
-    format_age,
-)
+from .store import Store, format_age
 from .theme import (
     PRISM_CARD,
     PRISM_CARD_EDGE,
@@ -948,62 +943,49 @@ class Hud:
 
     # ---- settings --------------------------------------------------------
 
+    # The alert threshold and the two switches, as an overlay view like the
+    # "Add mouse" steps. Each change saves at once and repaints the card.
+
     def _open_settings(self) -> None:
-        """The alert threshold and the two switches, in their own window."""
-        tk = self._tk
-        top = tk.Toplevel(self._root)
-        top.title("Settings")
-        top.configure(bg=PRISM_GROUND)
-        top.resizable(False, False)
-        top.transient(self._root)
+        self._set_overlay(view="settings")
 
-        body = tk.Frame(top, bg=PRISM_GROUND)
-        body.pack(padx=self.px(18), pady=self.px(16))
+    def _set_threshold(self, step: int) -> None:
+        self.store.set_alert_threshold(self.store.alert_threshold + step)
+        self._paint_overlay()
 
-        row = tk.Frame(body, bg=PRISM_GROUND)
-        row.pack(fill="x", pady=(0, self.px(10)))
-        tk.Label(row, text="Alert below", bg=PRISM_GROUND, fg=PRISM_TEXT_SOFT,
-                 font=("Segoe UI", 9)).pack(side="left")
-        threshold = tk.IntVar(value=self.store.alert_threshold)
-        tk.Label(row, text="%", bg=PRISM_GROUND, fg=PRISM_TEXT_DIM,
-                 font=("Segoe UI", 9)).pack(side="right", padx=(self.px(3), 0))
-        tk.Spinbox(
-            row, from_=MIN_ALERT_THRESHOLD, to=MAX_ALERT_THRESHOLD, increment=5,
-            width=3, textvariable=threshold, state="readonly", justify="right",
-            font=("Segoe UI", 9), bg=PRISM_HAIRLINE, fg=PRISM_TEXT,
-            readonlybackground=PRISM_HAIRLINE, buttonbackground=PRISM_HAIRLINE,
-            bd=0, highlightthickness=0,
-            command=lambda: self.store.set_alert_threshold(threshold.get()),
-        ).pack(side="right")
+    def _set_notify(self, on: bool) -> None:
+        self.store.set_notify_low(on)
+        self._paint_overlay()
 
-        notify = tk.BooleanVar(value=self.store.notify_low)
-        startup = tk.BooleanVar(value=autostart.is_enabled())
-
-        def check(text, variable, command):
-            tk.Checkbutton(
-                body, text=text, variable=variable, command=command,
-                bg=PRISM_GROUND, fg=PRISM_TEXT_SOFT, activebackground=PRISM_GROUND,
-                activeforeground=PRISM_TEXT, selectcolor=PRISM_HAIRLINE,
-                font=("Segoe UI", 9), anchor="w", bd=0, highlightthickness=0,
-                cursor="hand2",
-            ).pack(fill="x", pady=(0, self.px(4)))
-
-        check("Low battery notifications", notify,
-              lambda: self.store.set_notify_low(notify.get()))
-
-        def toggle_startup():
+    def _set_startup(self, on: bool) -> None:
+        # The card reads the registry back when it repaints: writing the Run
+        # key can fail, and "On" after a failed write lies about the next login.
+        if on != autostart.is_enabled():
             try:
                 autostart.toggle()
             except Exception:
                 pass
-            # Read the registry back: writing the Run key can fail, and a tick
-            # left on after a failed write lies about the next login.
-            startup.set(autostart.is_enabled())
+        self._paint_overlay()
 
-        check("Start with Windows", startup, toggle_startup)
-
-        top.bind("<Escape>", lambda _e: top.destroy())
-        top.protocol("WM_DELETE_WINDOW", lambda: (top.destroy(), self._rebuild()))
+    def _overlay_settings(self, flow, view) -> None:
+        flow.title("Settings")
+        flow.panel_start()
+        flow.text(f"Alert below {self.store.alert_threshold}%", size=10,
+                  fill=PRISM_TEXT, bold=True, after=2)
+        flow.text("Mice under this level are flagged, and notify if that is on.",
+                  size=8, fill=PRISM_TEXT_DIM, after=12)
+        flow.buttons([("−", lambda: self._set_threshold(-5), "secondary"),
+                      ("+", lambda: self._set_threshold(5), "secondary")])
+        flow.panel_end()
+        for label, on, action in (
+            ("Low battery notifications", self.store.notify_low, self._set_notify),
+            ("Start with Windows", autostart.is_enabled(), self._set_startup),
+        ):
+            flow.panel_start()
+            flow.text(label, size=10, fill=PRISM_TEXT, bold=True, after=12)
+            flow.buttons([("On", lambda a=action: a(True), "primary" if on else "quiet"),
+                          ("Off", lambda a=action: a(False), "quiet" if on else "primary")])
+            flow.panel_end()
 
     # ---- add mouse -------------------------------------------------------
     #
@@ -1027,7 +1009,9 @@ class Hud:
     def _close_overlay(self) -> None:
         self._overlay = None
         self._overlay_seq += 1
-        self._paint_overlay()
+        # A full rebuild, not just the overlay: the threshold changed in
+        # Settings colours the cards and chart beneath it.
+        self._rebuild()
 
     def _back(self) -> None:
         back = (self._overlay or {}).get("back")

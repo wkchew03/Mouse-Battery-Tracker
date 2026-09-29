@@ -102,7 +102,7 @@ since been cleared.
 - **Prism HUD.** Chosen from three colour treatments. Connected mouse pinned
   left, every other mouse on a scrolling shelf with no scrollbar, a discharge
   chart on the connected mouse. The alert settings moved behind the gear rather
-  than being dropped.
+  than being dropped, as an overlay like "Add mouse" (was a Tk window).
 - **Animated background is panned, not frame-looped.** A frame loop would cost
   about 130 MB of `PhotoImage` in an app that advertises 45 MB. Measured after
   the change: 44.5 MB. The timer idles at 700 ms while the window is hidden.

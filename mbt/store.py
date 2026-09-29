@@ -13,6 +13,8 @@ Files under %APPDATA%\\MouseBatteryTracker:
               history file, which is two orders of magnitude larger.
 - adopted.json  mice added from the HUD's "Add mouse" scan; owned by
               drivers/adopted.py, which reads it every poll.
+- merges.json  {"entry key": "entry it belongs to"}, written by hand, for a
+              mouse no driver knows is one device (see user_merges).
 
 Writes are atomic (temp file + os.replace) because the tray app can be killed at
 any moment, and a half-written state file would lose every device's history.
@@ -58,6 +60,23 @@ def app_dir() -> Path:
     base = os.environ.get("APPDATA")
     root = Path(base) if base else Path.home() / ".config"
     return root / APP_NAME
+
+
+def user_merges(path: Path | None = None) -> dict[str, str]:
+    """Entries the user has said are one mouse: {key: key it merges into}.
+
+    Keys are the top-level keys of state.json. Read on every call, like
+    adopted.json, so an edit applies from the next poll. Missing or damaged
+    file: no merges.
+    """
+    try:
+        raw = json.loads((path or app_dir() / "merges.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    # ponytail: one hop only; A -> B -> C leaves A on B. Follow chains if anyone writes one.
+    return {k: v for k, v in raw.items() if isinstance(k, str) and isinstance(v, str) and k != v}
 
 
 # Diagnostic log. pystray swallows exceptions raised inside menu callbacks and
@@ -217,6 +236,19 @@ class Store:
 
     def save_names(self) -> None:
         _write_json(self.names_file, self.names)
+
+    def add_merge(self, source: str, target: str) -> None:
+        """Record in merges.json that `source` is the same mouse as `target`.
+
+        Earlier merges into `source` are pointed at `target` too, so merging
+        twice never leaves a chain that user_merges would stop halfway along.
+        The records themselves fold on the next poll (TrayApp runs
+        merge_aliases after every one), on the thread that owns them.
+        """
+        path = self.directory / "merges.json"
+        merges = {k: (target if v == source else v) for k, v in user_merges(path).items()}
+        merges[source] = target
+        _write_json(path, merges)
 
     # ---- mutation -------------------------------------------------------
 

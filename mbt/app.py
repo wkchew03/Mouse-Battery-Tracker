@@ -70,6 +70,10 @@ def legacy_aliases() -> dict[str, str]:
             aliases.update(getter())
         except Exception:
             continue
+    # Last, so a merge the user wrote by hand wins over a driver's.
+    from .store import user_merges
+
+    aliases.update(user_merges())
     return aliases
 
 

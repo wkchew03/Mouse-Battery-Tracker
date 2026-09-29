@@ -196,17 +196,21 @@ def resolve_identity(driver: "Driver", info: DeviceInfo) -> str:
     A mouse that can run wired or on a dongle enumerates under two different
     product ids, which would otherwise show up as two entries that never agree.
     Drivers that know two ids are the same hardware say so via `identity()`;
-    everything else falls back to the hardware key.
+    everything else falls back to the hardware key. Either can then be
+    redirected by the user's merges.json (`store.user_merges`).
     """
+    identity = None
     getter = getattr(driver, "identity", None)
     if getter is not None:
         try:
             identity = getter(info)
         except Exception:
-            identity = None
-        if identity:
-            return identity
-    return device_key(info)
+            pass
+    identity = identity or device_key(info)
+    # Imported here: store imports this module.
+    from ..store import user_merges
+
+    return user_merges().get(identity, identity)
 
 
 def resolve_label(driver: "Driver", info: DeviceInfo) -> str:

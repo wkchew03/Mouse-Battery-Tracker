@@ -186,3 +186,37 @@ def test_migration_is_idempotent(tmp_path):
     store.merge_aliases(ipi.legacy_aliases())
     assert store.merge_aliases(ipi.legacy_aliases()) == 0
     assert store.records["ipi:float88"].percent == 55
+
+
+def test_user_merge_redirects_an_entry_and_folds_its_record(tmp_path):
+    """merges.json joins two entries no driver knows are one mouse."""
+    import json
+
+    from mbt import app
+    from mbt.drivers.base import resolve_identity
+    from mbt.store import app_dir, user_merges
+
+    class Plain:
+        pass
+
+    wired = {"vendor_id": 0x33E4, "product_id": 0x0018, "serial_number": "AAAA1111"}
+    assert resolve_identity(Plain(), wired) == "33e4:0018:AAAA1111"
+
+    app_dir().mkdir(parents=True)
+    (app_dir() / "merges.json").write_text(
+        json.dumps({"33e4:0018:AAAA1111": "33e4:0017:BBBB2222", "bad": 3}), encoding="utf-8")
+    assert resolve_identity(Plain(), wired) == "33e4:0017:BBBB2222"
+    assert user_merges() == {"33e4:0018:AAAA1111": "33e4:0017:BBBB2222"}
+    assert app.legacy_aliases()["33e4:0018:AAAA1111"] == "33e4:0017:BBBB2222"
+
+    (app_dir() / "merges.json").write_text("{not json", encoding="utf-8")
+    assert user_merges() == {}
+
+
+def test_add_merge_repoints_earlier_merges_instead_of_chaining():
+    from mbt.store import Store, user_merges
+
+    store = Store()
+    store.add_merge("a", "b")
+    store.add_merge("b", "c")
+    assert user_merges(store.directory / "merges.json") == {"a": "c", "b": "c"}

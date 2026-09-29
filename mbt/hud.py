@@ -398,24 +398,31 @@ class Hud:
             self._root.withdraw()
 
     def _rename(self, key: str, current: str) -> None:
-        """Prompt for a display name. Blank clears the override."""
-        from tkinter import simpledialog
+        """Ask for a display name on the overlay. Blank clears the override."""
+        self._set_overlay(view="rename", key=key, current=current,
+                          name=self._tk.StringVar(value=current))
 
-        answer = simpledialog.askstring(
-            "Rename mouse",
-            "Display name (leave blank to use the device's own name):",
-            initialvalue=current,
-            parent=self._root,
-        )
-        if answer is None:  # cancelled
-            return
-        self.store.set_display_name(key, answer)
+    def _save_rename(self) -> None:
+        view = self._overlay
+        key, current = view["key"], view["current"]
+        self.store.set_display_name(key, view["name"].get())
         # The image is looked up by name, so carry the file across or a rename
         # would silently drop the picture.
         new_name = self.store.display_name(key, "")
         if new_name != current:
             self._move_image(key, current, new_name)
-        self._rebuild()
+        self._close_overlay()
+
+    def _overlay_rename(self, flow, view) -> None:
+        record = self.store.records.get(view["key"])
+        own = record.label if record is not None else ""
+        flow.title("Rename mouse")
+        flow.entry(view["name"])
+        flow.text(f"Leave blank to use its own name, “{own}”." if own else
+                  "Leave blank to use the device's own name.",
+                  size=8, fill=PRISM_TEXT_DIM, after=16)
+        flow.buttons([("Save", self._save_rename, "primary"),
+                      ("Cancel", self._close_overlay, "quiet")])
 
     def _move_image(self, key: str, old_name: str, new_name: str) -> None:
         from .mouseart import candidate_paths, custom_image_path

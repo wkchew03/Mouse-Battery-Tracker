@@ -199,8 +199,8 @@ Protocol details were worked out from these projects and from each vendor's
 own configurator; each driver's docstring says which it used.
 
 - [attack-shark-r6-cli](https://github.com/mohammed-just/attack-shark-r6-cli)
-  (GPL-2.0) — CompX gen-2 battery protocol; `mbt/drivers/compx.py` adapts its
-  battery parsing.
+  (GPL-2.0) — CompX gen-2 battery protocol (opcode, reply marker, byte
+  offsets). No code is taken from it.
 - [OpenRazer](https://github.com/openrazer/openrazer),
   [opsrzr](https://github.com/atv57/opsrzr) (GPL-2.0) and
   [razer-battery-report](https://github.com/xzeldon/razer-battery-report)
@@ -212,5 +212,4 @@ own configurator; each driver's docstring says which it used.
 
 ## License
 
-GPL-2.0-only; see [LICENSE](LICENSE). Only version 2: part of the CompX driver
-is adapted from GPL-2.0 code that does not offer "or any later version".
+GPL-3.0-or-later; see [LICENSE](LICENSE).

@@ -4,9 +4,10 @@
 Battery is opcode 0x83; the reply is marked by 0xA1 and carries the percentage
 and charging flag in adjacent bytes whose order varies by firmware.
 
-Protocol from attack-shark-r6-cli (`r6ctl.py`, GPL-2.0,
-https://github.com/mohammed-just/attack-shark-r6-cli); `normalize_battery` and
-`parse_battery` are adapted from its `get_battery`.
+Protocol facts (opcode, marker, byte offsets, the swapped byte order) from
+attack-shark-r6-cli (`r6ctl.py`, https://github.com/mohammed-just/attack-shark-r6-cli).
+No code is taken from it: the parsing below was rewritten from those facts
+alone, so this module carries the project's license, not that one's GPL-2.0.
 
 Note this does NOT cover the IPI Float 88 (`372e:1014`), which is a different
 platform entirely -- it uses report ID 0x03 with a checksummed `0x50` frame and
@@ -126,33 +127,42 @@ def build_command(b2: int, b3: int, b4: int = 0, b5: int = 0) -> bytes:
 
 
 def normalize_battery(a: int, b: int) -> tuple[int | None, bool | None]:
-    """Firmware disagrees on the order of (percent, charging_flag).
+    """Split the two data bytes into (percent, charging).
 
-    The byte in 0..1 is the flag and the one in 0..100 is the percentage; when
-    both are ambiguous, prefer the first plausible percentage.
+    Firmware puts the 0/1 charging flag on either side of the percentage. A
+    flag in the first byte wins when both readings are plausible. With no 0/1 byte
+    the charging state is unknown and the first byte that could be a
+    percentage is used.
     """
-    if a in (0, 1) and 0 <= b <= 100:
-        return b, bool(a)
-    if b in (0, 1) and 0 <= a <= 100:
-        return a, bool(b)
-    if 0 <= a <= 100:
-        return a, None
-    if 0 <= b <= 100:
-        return b, None
-    return None, None
+    for flag, level in ((a, b), (b, a)):
+        if flag in (0, 1) and level <= 100:
+            return level, bool(flag)
+    level = next((byte for byte in (a, b) if byte <= 100), None)
+    return level, None
+
+
+# The reply's layout: marker, two bytes, the 0x02 status, a byte, the echoed
+# opcode, then the two data bytes. Depending on the host stack the report id
+# is left at the front of the buffer or stripped, so the frame starts at 1 or 0.
+FRAME_STATUS = 3
+FRAME_OPCODE = 5
+FRAME_DATA = 6
+
+
+def _battery_frame(response: bytes) -> bytes | None:
+    for start in (1, 0):
+        frame = response[start:]
+        if (frame[0] == RESPONSE_MARKER and frame[FRAME_STATUS] == 2
+                and frame[FRAME_OPCODE] == OPCODE_BATTERY):
+            return frame
+    return None
 
 
 def parse_battery(response: bytes) -> Reading:
-    """Response carries 0xA1 at index 1, then the echoed opcode at index 6."""
-    if len(response) < 9:
-        return OFFLINE
-    if response[1] == RESPONSE_MARKER and response[4] == 2 and response[6] == OPCODE_BATTERY:
-        percent, charging = normalize_battery(response[7], response[8])
-    elif response[0] == RESPONSE_MARKER and response[3] == 2 and response[5] == OPCODE_BATTERY:
-        percent, charging = normalize_battery(response[6], response[7])
-    else:
-        return OFFLINE
-
+    # Nine bytes covers a frame with the report id still in front of it.
+    frame = _battery_frame(response) if len(response) >= 9 else None
+    percent, charging = (normalize_battery(frame[FRAME_DATA], frame[FRAME_DATA + 1])
+                         if frame is not None else (None, None))
     if percent is None:
         return OFFLINE
     return Reading(online=True, percent=percent, charging=charging)

@@ -14,6 +14,8 @@ STATUS: verified on a CRDRAKO KO-ONE 8K receiver (373e:006b), cross-checked
 against the vendor's panel at 100%. The LAMZU Maya X 8K dongle (373e:001e)
 has also been read (73%). Its wired pid 001c is only known from one stored
 record, and the two were merged by identity without being seen side by side.
+The G-Wolves HTX Ultra has been read as its 8K receiver (33e4:5617, 82%)
+and wired while charging (33e4:5608, 91%), and the two are merged the same way.
 
 Note the command channel is not always on usage page 0xff00 -- the KO-ONE uses
 0xffff -- so the collection is chosen by which one declares a feature report.
@@ -62,8 +64,11 @@ PIDS = {
 MODEL_GROUPS = {
     (VENDOR_ATTACK_SHARK, 0x001C): "lamzu:mayax",
     (VENDOR_ATTACK_SHARK, 0x001E): "lamzu:mayax",
+    # The mouse itself enumerates as 5608 on its charging cable.
+    (VENDOR_GWOLVES, 0x5608): "gwolves:htxultra",
+    (VENDOR_GWOLVES, 0x5617): "gwolves:htxultra",
 }
-MODEL_NAMES = {"lamzu:mayax": "LAMZU Maya X"}
+MODEL_NAMES = {"lamzu:mayax": "LAMZU Maya X", "gwolves:htxultra": "G-Wolves HTX Ultra"}
 
 # Hardware keys seen this session -> their group. The old keys carry the
 # serial, so unlike ipi.py's table they cannot be listed ahead of time.

@@ -142,6 +142,15 @@ def test_maya_x_wired_and_dongle_share_one_identity():
     assert aliases["373e:001c:0505D08F"] == "lamzu:mayax"
 
 
+
+def test_htx_ultra_on_its_cable_and_receiver_share_one_identity():
+    driver = compx.CompxDriver()
+    wired = {"vendor_id": 0x33E4, "product_id": 0x5608, "serial_number": "33AD01982843"}
+    receiver = {"vendor_id": 0x33E4, "product_id": 0x5617, "serial_number": "13FE37A220A4"}
+    assert driver.identity(wired) == driver.identity(receiver) == "gwolves:htxultra"
+    assert driver.label(receiver) == "G-Wolves HTX Ultra"
+    assert compx.legacy_aliases()["33e4:5608:33AD01982843"] == "gwolves:htxultra"
+
 def test_other_compx_devices_keep_their_hardware_key():
     ko_one = {"vendor_id": 0x373E, "product_id": 0x006B, "serial_number": "X"}
     assert compx.CompxDriver().identity(ko_one) is None

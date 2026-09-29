@@ -91,6 +91,9 @@ TICK_MS = 70
 # still is.
 IDLE_TICK_MS = 700
 
+# Quiet time after the last resize event before the layout is rebuilt.
+RESIZE_SETTLE_MS = 80
+
 
 class Hud:
     """Owns the Tk thread. Safe to call show()/update()/stop() from anywhere."""
@@ -133,6 +136,7 @@ class Hud:
         self._root = None
         self._canvas = None
         self._bg_item = None
+        self._resize_job = None
         self._field: prism.Field | None = None
         # Tk garbage-collects images that nothing references, leaving blank
         # items, so every sprite in the current view is kept alive here.
@@ -296,6 +300,15 @@ class Hud:
         self._canvas.tag_lower(self._bg_item)
 
     def _on_resize(self, _event=None) -> None:
+        # A drag fires <Configure> dozens of times and a rebuild at a new size
+        # costs ~0.3s, so rebuilding on each one queued seconds of stale
+        # layouts. Rebuild once, when the size has stopped changing.
+        if self._resize_job is not None:
+            self._root.after_cancel(self._resize_job)
+        self._resize_job = self._root.after(RESIZE_SETTLE_MS, self._resized)
+
+    def _resized(self) -> None:
+        self._resize_job = None
         if self._root is not None and self._root.state() != "withdrawn":
             self._rebuild()
 

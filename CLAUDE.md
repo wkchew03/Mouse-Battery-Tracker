@@ -46,6 +46,8 @@ Windows tray app that reads gaming-mouse battery over USB HID. Layers, bottom up
   (60→120→240→300s) after 3 failures, serving the cached reading while backed
   off. `reset_backoff()` is what makes manual refresh actually re-query.
 - `store.py` → `%APPDATA%/MouseBatteryTracker/{state.json,names.json,settings.json}`,
+  plus `merges.json` (`user_merges()`, applied in `resolve_identity`; written by
+  `add_merge` from the Settings overlay or by hand),
   atomic writes. `history.py` holds the pure sample/estimate functions it calls.
   Settings (alert threshold, notification switch) live in their own file so a
   checkbox does not rewrite the much larger history.

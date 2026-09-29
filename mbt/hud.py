@@ -83,6 +83,13 @@ PILL_HEIGHT = 28
 # The "Add mouse" overlay's card, at 100% scale.
 OVERLAY_WIDTH = 460
 
+# Mouse picture on a merge pill, at 100% scale; the pill is 32 tall.
+MERGE_ICON = 24
+
+# The merge card is wider than the others so its pills pack three to a row;
+# at OVERLAY_WIDTH a full list ran off the bottom of the default window.
+MERGE_WIDTH = 640
+
 # One pan step. Slow enough to read as drift rather than motion, cheap enough
 # that it is a coords() call and nothing else.
 TICK_MS = 70
@@ -999,6 +1006,128 @@ class Hud:
             flow.buttons([("On", lambda a=action: a(True), "primary" if on else "quiet"),
                           ("Off", lambda a=action: a(False), "quiet" if on else "primary")])
             flow.panel_end()
+        flow.buttons([("Merge two entries",
+                       lambda: self._set_overlay(view="merge", width=MERGE_WIDTH,
+                                  back=self._overlay),
+                       "secondary")])
+
+    # ---- merge two entries ------------------------------------------------
+    #
+    # For one mouse that shows up twice and no driver knows it (its cable and
+    # its receiver, say). Two steps on the "merge" view: pick the two entries
+    # (either order, click again to unpick), then choose which one to keep --
+    # that choice is the confirmation. Writes merges.json.
+
+    def _entry_label(self, record, age: bool = True) -> str:
+        # The level (and age, where there is room) as well as the name: two
+        # entries for one mouse usually share a name.
+        label = (f"{self.store.display_name(record.key, record.label)}"
+                 f"  ·  {record.describe_last_known()}")
+        if age:
+            label += "  ·  " + format_age(time.time() - record.last_online).replace(" ago", "")
+        return label
+
+    def _entry_icon(self, record):
+        """The card's picture, small: the fastest way to tell mice apart.
+
+        On a faint light disc, or a black mouse vanishes into the dark pill.
+        """
+        from PIL import Image, ImageDraw
+
+        size = self.px(MERGE_ICON)
+        name = self.store.display_name(record.key, record.label)
+        art = load_custom(self.images_dir, record.key, size, name) or render_mouse(
+            size=size, percent=record.percent, online=False)
+        disc = Image.new("RGBA", (size * 4, size * 4), (0, 0, 0, 0))
+        ImageDraw.Draw(disc).ellipse((0, 0, size * 4 - 1, size * 4 - 1),
+                                     fill=(255, 255, 255, 46))
+        return Image.alpha_composite(disc.reduce(4), art.convert("RGBA").resize((size, size)))
+
+    def _pick_merge(self, key: str) -> None:
+        view = self._overlay
+        picked = [k for k in view.get("picked", []) if k != key]
+        if len(picked) == len(view.get("picked", [])):
+            picked.append(key)
+        if len(picked) == 2:
+            self._set_overlay(view="merge", width=MERGE_WIDTH, picked=picked,
+                              back=dict(view="merge", width=MERGE_WIDTH,
+                                        back=view.get("back")))
+        else:
+            # In place, so keyboard focus stays on the pill just pressed.
+            view["picked"] = picked
+            self._paint_overlay()
+
+    def _merge(self, keep: str, fold: str) -> None:
+        self.store.add_merge(fold, keep)
+        self._close_overlay()
+        if self.on_refresh is not None:
+            self.on_refresh("merge")
+
+    def _overlay_merge(self, flow, view) -> None:
+        records = self.store.records
+        # A poll can fold or drop an entry while this is open.
+        picked = [k for k in view.get("picked", []) if k in records]
+        flow.title("Merge two entries")
+
+        if len(picked) == 2:
+            # Most recently seen first, and suggested: usually the live one.
+            keep, other = sorted((records[k] for k in picked),
+                                 key=lambda r: r.last_online, reverse=True)
+            flow.text("Step 2 of 2  ·  Which one should stay?", size=10,
+                      fill=PRISM_TEXT, after=4)
+            flow.text("The other's history and name move into it, and it stops "
+                      "appearing on its own.", fill=PRISM_TEXT_DIM, after=14)
+            flow.buttons([
+                ("Keep " + self._entry_label(keep),
+                 lambda: self._merge(keep.key, other.key), "primary", self._entry_icon(keep)),
+                ("Keep " + self._entry_label(other),
+                 lambda: self._merge(other.key, keep.key), "secondary",
+                 self._entry_icon(other)),
+            ], after=14)
+            flow.text("To split them again, delete the line from merges.json. History "
+                      "already combined stays combined.", size=8, fill=PRISM_TEXT_FAINT,
+                      after=14)
+            flow.buttons([("Back", self._back, "quiet")])
+            return
+
+        flow.text("Step 1 of 2  ·  Pick the two entries that are the same mouse.",
+                  size=10, fill=PRISM_TEXT, after=4)
+        flow.text(f"Picked {self._entry_label(records[picked[0]], age=False)}. "
+                  "Now pick its match." if picked else
+                  "Order doesn't matter: you choose which one to keep next.",
+                  fill=PRISM_TEXT_DIM, after=14)
+
+        entries = [r for r in self.store.recent() if r.last_online]
+        names = [self.store.display_name(r.key, r.label) for r in entries]
+        same = [r for r, n in zip(entries, names) if names.count(n) > 1]
+        rest = [r for r in entries if r not in same]
+        if not same:
+            view["all"] = True
+
+        def pills(group):
+            return [(("✓  " if r.key in picked else "") + self._entry_label(r, age=False),
+                     lambda k=r.key: self._pick_merge(k),
+                     "primary" if r.key in picked else "secondary",
+                     self._entry_icon(r)) for r in group]
+
+        back = ("Back", self._back, "quiet")
+        # Entries sharing a name are nearly always the duplicate, so they come
+        # first and the rest wait behind a pill -- which also keeps the card
+        # inside the window. A pick among the rest keeps them shown.
+        if same and not (view.get("all") or any(k not in {r.key for r in same}
+                                                  for k in picked)):
+            flow.text("SAME NAME", size=7, fill=PRISM_TEXT_FAINT, bold=True, after=6)
+            flow.buttons(pills(same), after=14)
+            flow.buttons([(f"Show all entries ({len(entries)})", self._show_all_merge,
+                           "secondary"), back])
+            return
+        # ponytail: one pill per entry, no scrolling; a few dozen mice would run
+        # off a short window. Scroll the overlay if that ever happens.
+        flow.buttons(pills(same + rest) + [back])
+
+    def _show_all_merge(self) -> None:
+        self._overlay["all"] = True
+        self._paint_overlay()
 
     # ---- add mouse -------------------------------------------------------
     #
@@ -1199,7 +1328,7 @@ class Hud:
                             image=sprite(Image.new("RGBA", (width, height), PRISM_SCRIM)))
 
         pad = self.px(24)
-        card_w = min(self.px(OVERLAY_WIDTH), width - self.px(32))
+        card_w = min(self.px(view.get("width", OVERLAY_WIDTH)), width - self.px(32))
         card_x = (width - card_w) // 2
         flow = _Flow(self, card_x + pad, card_w - pad * 2, sprite)
         getattr(self, f"_overlay_{view['view']}")(flow, view)
@@ -1403,18 +1532,20 @@ class _Flow:
         self.y = top + height + px(after)
 
     def buttons(self, specs, after=0) -> None:
-        """A row of (label, action, kind) buttons, wrapping when it runs out."""
+        """A row of (label, action, kind[, icon]) buttons, wrapping when it
+        runs out. `icon` is a square PIL image drawn left of the label."""
         px = self.hud.px
         height, gap = px(self.BUTTON_HEIGHT), px(8)
         left = self.x + self.indent
         right = self.x + self.width - self.indent
         bx = left
-        for label, action, kind in specs:
-            width = self._measure(label)
+        for label, action, kind, *icon in specs:
+            icon = icon[0] if icon else None
+            width = self._measure(label) + (icon.width + px(6) - px(4) if icon else 0)
             if bx > left and bx + width > right:
                 bx = left
                 self.y += height + gap
-            self._button(bx, self.y, width, height, label, action, kind)
+            self._button(bx, self.y, width, height, label, action, kind, icon)
             bx += width + gap
         self.y += height + px(after)
 
@@ -1424,7 +1555,7 @@ class _Flow:
         self.canvas.delete(item)
         return right - left + self.hud.px(28)
 
-    def _button(self, x, y, width, height, label, action, kind) -> None:
+    def _button(self, x, y, width, height, label, action, kind, icon=None) -> None:
         canvas, px = self.canvas, self.hud.px
         (fill, border, ink), (lit_fill, lit_border, lit_ink) = self.STYLES[kind]
         idle = self.sprite(render_frost(width, height, height // 2, fill, border))
@@ -1440,7 +1571,15 @@ class _Flow:
             )),
         )
         bg = canvas.create_image(x, y, anchor="nw", image=idle, tags=tags)
-        text = canvas.create_text(x + width // 2, y + height // 2, text=label, fill=ink,
+        text_x = x + width // 2
+        if icon is not None:
+            # Tighter left padding than right: the pill's round end already
+            # leaves room around a picture.
+            pad = px(10)
+            canvas.create_image(x + pad, y + height // 2, anchor="w",
+                                image=self.sprite(icon), tags=tags)
+            text_x += (pad + icon.width + px(6) - px(14)) // 2
+        text = canvas.create_text(text_x, y + height // 2, text=label, fill=ink,
                                   font=("Segoe UI", 9), tags=tags)
 
         def enter(_event):

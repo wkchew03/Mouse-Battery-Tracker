@@ -51,6 +51,23 @@ Tick **Start with Windows** in the tray menu to launch it at login.
   mouse must climb 10 points above the threshold before it can warn again.
 - **Stream Deck plugin** (optional) — see `streamdeck/`.
 
+### Merging two entries
+
+A mouse that shows up twice (say once on its receiver, once on its cable) can
+be joined from the gear: **Merge two entries**, pick the two entries (ones
+sharing a name are listed first), then choose which one to keep. That writes `merges.json`, which can also be edited by hand:
+create `%APPDATA%\MouseBatteryTracker\merges.json` mapping
+the entry to fold away onto the one to keep, using the keys from `state.json`
+in the same folder:
+
+```json
+{"1234:0002:WIREDSERIAL": "1234:0001:RECEIVERSERIAL"}
+```
+
+It applies from the next poll, with no restart: the history and name move
+across, and the folded device reports under the kept entry from then on.
+Delete the line to split them again (history already merged stays merged).
+
 ### Other commands
 
 ```bash

@@ -4,7 +4,9 @@
 Battery is opcode 0x83; the reply is marked by 0xA1 and carries the percentage
 and charging flag in adjacent bytes whose order varies by firmware.
 
-Protocol from attack-shark-r6-cli (`r6ctl.py`).
+Protocol from attack-shark-r6-cli (`r6ctl.py`, GPL-2.0,
+https://github.com/mohammed-just/attack-shark-r6-cli); `normalize_battery` and
+`parse_battery` are adapted from its `get_battery`.
 
 Note this does NOT cover the IPI Float 88 (`372e:1014`), which is a different
 platform entirely -- it uses report ID 0x03 with a checksummed `0x50` frame and

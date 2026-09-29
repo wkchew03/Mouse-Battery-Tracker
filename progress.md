@@ -111,6 +111,11 @@ since been cleared.
   there after hiding: the sprites and field are kept, not freed. True of the
   last commit before "Add mouse" too; the "Add mouse" overlay adds ~13 MB only
   while it is open.
+- **No second field cached for maximise/restore.** A 4K maximise rebuilds in
+  ~0.47s (was 0.78s before cheaper resampling). Keeping the other size's field
+  would make toggling near-instant but holds the ~5570x2980 field after
+  restoring: measured 78 MB restored vs 248 MB maximised. Declined 2026-09-29.
+  Next lever if it matters: less overscan on the field.
 - **Charts use the full 0-100 axis.** Scaling to fit would draw a five-point
   drop as a cliff.
 - **Ages are in days all the way up** ("23d ago"), never weeks, at the user's

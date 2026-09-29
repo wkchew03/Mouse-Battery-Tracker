@@ -67,15 +67,18 @@ def render_field(width: int, height: int) -> Image.Image:
     # One blur at draft size does the work of a much larger one at full size.
     # 0.055 of the draft is ~72px at full size, matching the design's blur.
     field = field.filter(ImageFilter.GaussianBlur(radius=max(draft) * 0.055))
-    field = field.resize(full, Image.LANCZOS)
+    # Bilinear, not LANCZOS: the draft is all blur, so there is no detail for
+    # a sharper filter to keep, and at 4K LANCZOS was most of a resize.
+    field = field.resize(full, Image.BILINEAR)
     return _add_grain(field)
 
 
 def _add_grain(image: Image.Image) -> Image.Image:
     """Faint diagonal texture, drawn once into the field."""
     width, height = image.size
-    grain = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(grain)
+    # An "RGBA" draw on an RGB image blends each line in place: the same
+    # pixels as compositing a grain layer, without three full-size copies.
+    draw = ImageDraw.Draw(image, "RGBA")
     # 115 degrees in the design; drawn as lines with a slope of that angle.
     slope = math.tan(math.radians(115))
     reach = width + abs(int(height / slope)) if slope else width
@@ -85,7 +88,7 @@ def _add_grain(image: Image.Image) -> Image.Image:
             fill=(255, 255, 255, GRAIN_ALPHA),
             width=1,
         )
-    return Image.alpha_composite(image.convert("RGBA"), grain).convert("RGB")
+    return image
 
 
 def offset_at(elapsed: float, width: int, height: int) -> tuple[int, int]:

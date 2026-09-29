@@ -71,7 +71,9 @@ def render_frost(
         outline=_rgba(border) if border else None,
         width=border_width * scale if border else 0,
     )
-    return card.resize((width, height), Image.LANCZOS)
+    # reduce() is an exact box average of each scale x scale block: the same
+    # antialiasing as LANCZOS here, at a fraction of the cost on a 4K panel.
+    return card.reduce(scale)
 
 
 def _dashed_line(draw, x0: float, y: float, x1: float, colour, dash: int = 3) -> None:
@@ -146,7 +148,7 @@ def render_discharge_chart(
             draw.ellipse((hx - r, hy - r, hx + r, hy + r), fill=ink,
                          outline=_rgba(PRISM_GROUND), width=2 * scale)
 
-    return image.resize((width, height), Image.LANCZOS)
+    return image.reduce(scale)
 
 
 def fade_mask(width: int, height: int, ramp: int, reverse: bool = False) -> Image.Image:

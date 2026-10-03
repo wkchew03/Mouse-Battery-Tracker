@@ -28,12 +28,14 @@ shape. Last updated 2026-09-28.
   between the status line and the chart. Faithful to the approved design, but
   more noticeable at real size.
 
-- **Removing a placeholder or adoption.** "Add mouse" can add entries to
-  `adopted.json` but nothing removes one, and no
-  mouse record can be forgotten from the UI either. Delete the entry from the
-  file by hand.
 
 ## Not yet verified
+
+- **"Remove an entry" in the running app.** Settings (gear) → Remove an entry
+  → pick → confirm: drops the record, its name and any `adopted.json` entry, on
+  the poll thread. Screenshotted and run end to end in a preview against a temp
+  copy of the data, with the poll-thread job run inline; not clicked through in
+  the live app. A connected mouse reappears on the poll that follows.
 
 - **"Add mouse" in the running app.** The scan was run on real hardware (found
   the Viper as tracked and the SINO WEALTH keyboard as unrecognised, since

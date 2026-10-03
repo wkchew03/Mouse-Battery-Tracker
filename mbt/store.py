@@ -315,6 +315,15 @@ class Store:
                 pass
         return merged
 
+    def forget(self, key: str) -> None:
+        """Drop a mouse's record and name. Run on the poll thread, which owns
+        the records; a mouse that is still connected comes back on the next
+        poll."""
+        self.records.pop(key, None)
+        if self.names.pop(key, None) is not None:
+            self.save_names()
+        self.save()
+
     def display_name(self, key: str, fallback: str = "") -> str:
         return self.names.get(key) or fallback or key
 

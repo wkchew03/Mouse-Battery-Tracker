@@ -1016,7 +1016,49 @@ class Hud:
         flow.buttons([("Merge two entries",
                        lambda: self._set_overlay(view="merge", width=MERGE_WIDTH,
                                   back=self._overlay),
+                       "secondary"),
+                      ("Remove an entry",
+                       lambda: self._set_overlay(view="remove", width=MERGE_WIDTH,
+                                                 back=self._overlay),
                        "secondary")])
+
+    # ---- remove an entry --------------------------------------------------
+    #
+    # Pick an entry (the merge step's pills), then confirm. Drops its record,
+    # name and any adopted.json line.
+
+    def _overlay_remove(self, flow, view) -> None:
+        record = self.store.records.get(view.get("key"))
+        if record is None:
+            flow.title("Remove an entry")
+            flow.text("Pick the entry to forget.", size=10, fill=PRISM_TEXT, after=14)
+            # ponytail: same no-scroll ceiling as the merge list.
+            flow.buttons([(self._entry_label(r, age=False),
+                           lambda k=r.key: self._set_overlay(view="remove", width=MERGE_WIDTH,
+                                                             key=k, back=view),
+                           "secondary", self._entry_icon(r))
+                          for r in self.store.recent() if r.last_online]
+                         + [("Back", self._back, "quiet")])
+            return
+        flow.title("Remove an entry")
+        flow.text(f"Forget {self._entry_label(record, age=False)}?", size=10, fill=PRISM_TEXT, after=4)
+        flow.text("Its battery history and name are deleted. A mouse that is still "
+                  "connected comes back on the next poll; one added with “Add mouse” "
+                  "stays gone until it is added again.", fill=PRISM_TEXT_DIM, after=16)
+        flow.buttons([("Remove", lambda: self._remove(record.key), "danger"),
+                      ("Back", self._back, "quiet")])
+
+    def _remove(self, key: str) -> None:
+        from .drivers import adopted
+
+        def job():
+            adopted.remove(key)
+            self.store.forget(key)
+
+        # On the poll thread: it owns the records, and a pop from here could
+        # land mid-save. The poll that follows repaints the HUD without it.
+        self.run_on_poll_thread(job)
+        self._close_overlay()
 
     # ---- merge two entries ------------------------------------------------
     #
@@ -1466,6 +1508,9 @@ class _Flow:
                       ((52, 55, 72, 220), (255, 255, 255, 80), PRISM_TEXT)),
         "quiet": (((0, 0, 0, 0), None, PRISM_TEXT_DIM),
                   ((255, 255, 255, 20), None, PRISM_TEXT)),
+        # Destructive confirms only.
+        "danger": (((222, 74, 62, 235), None, PRISM_GROUND),
+                   ((240, 108, 96, 245), None, PRISM_GROUND)),
     }
 
     def __init__(self, hud, x: int, width: int, sprite) -> None:

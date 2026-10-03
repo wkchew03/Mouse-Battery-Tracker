@@ -161,3 +161,12 @@ def test_diagnosis_names_a_supported_vendor():
         "Razer is supported, but not this model yet.")
     assert "new driver" in probe.diagnose([MOUSE, VENDOR])
     assert "no channel" in probe.diagnose([MOUSE])
+
+
+def test_remove_drops_only_that_device(tmp_path):
+    path = tmp_path / "adopted.json"
+    adopted.add(adopted.Adoption(UNKNOWN_VID, UNKNOWN_PID), path)
+    adopted.add(adopted.Adoption(0x1234, 0x5678), path)
+    adopted.remove("logitech:e4cd8e68", path)  # not an adoption key: no-op
+    adopted.remove(device_key(MOUSE), path)
+    assert adopted.load(path) == [adopted.Adoption(0x1234, 0x5678)]

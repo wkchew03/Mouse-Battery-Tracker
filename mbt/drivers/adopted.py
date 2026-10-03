@@ -121,6 +121,23 @@ def add(adoption: Adoption, path: Path | None = None) -> None:
     _write_json(path or default_path(), [list(a) for a in kept + [adoption]])
 
 
+def remove(key: str, path: Path | None = None) -> None:
+    """Drop the adoption behind a record key ("vid:pid[:serial]"), if any.
+
+    Other drivers' keys ("logitech:...") are not hex and match nothing.
+    """
+    from ..store import _write_json
+
+    try:
+        vid, pid = (int(part, 16) for part in key.split(":")[:2])
+    except ValueError:
+        return
+    adoptions = load(path)
+    kept = [a for a in adoptions if (a.vendor_id, a.product_id) != (vid, pid)]
+    if len(kept) != len(adoptions):
+        _write_json(path or default_path(), [list(a) for a in kept])
+
+
 def is_mouse_collection(info: DeviceInfo) -> bool:
     return info.get("usage_page") == 0x0001 and info.get("usage") == 0x02
 

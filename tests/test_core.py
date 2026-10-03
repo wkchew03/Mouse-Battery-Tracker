@@ -98,6 +98,20 @@ def test_store_round_trip(tmp_path: Path):
     assert reloaded.records["372e:1014"].label == "IPI Float 88"
 
 
+def test_forget_drops_record_and_name(tmp_path: Path):
+    store = Store(tmp_path)
+    store.load()
+    store.update("372e:1014", "IPI Float 88", Reading(online=True, percent=72))
+    store.update("1532:007b", "Viper", Reading(online=True, percent=41))
+    store.set_display_name("372e:1014", "Float 88")
+    store.forget("372e:1014")
+
+    reloaded = Store(tmp_path)
+    reloaded.load()
+    assert list(reloaded.records) == ["1532:007b"]
+    assert reloaded.names == {}
+
+
 def test_display_name_overrides_device_string(tmp_path: Path):
     store = Store(tmp_path)
     store.load()

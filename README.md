@@ -45,7 +45,8 @@ Tick **Start with Windows** in the tray menu to launch it at login.
   the right as a shelf of cards showing its picture, last known level and how
   long ago that was. Hover the chart to read any point. The shelf scrolls by
   wheel with no scrollbar. Rename a mouse or set a custom picture by clicking
-  its name or image; the gear in the panel holds the alert settings.
+  its name or image; the gear in the panel holds the alert settings, and
+  **Remove an entry** to forget a mouse (one still connected comes back).
 - **Low-battery alert**, once per discharge cycle rather than every poll. The
   threshold and whether it fires at all are set in the detail window; a warned
   mouse must climb 10 points above the threshold before it can warn again.
